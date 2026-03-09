@@ -22,7 +22,8 @@ void tx_application_define(void *first_unused_memory)
 
 void tx_thread_stack_error_notify(TX_THREAD *thread)
 {
-  ;
+  printf("Thread %s stack overflow detected\r\n", thread->tx_thread_name);
+  Error_Handler();
 }
 
 int main(void)
@@ -63,7 +64,15 @@ int main(void)
 
 void tx_main()
 {
-  while (true)
-  {
-  }
+  TX_THREAD main_thread;
+  UCHAR main_thread_stack[4096];
+
+  CHAR thread_name[] = "Main Thread";
+  tx_thread_create(&main_thread, thread_name, [](ULONG entry_input)
+                   {
+    while (true)
+    {
+      BSP_LED_Toggle(LED_GREEN);
+      tx_thread_sleep(100);
+    } }, 0, main_thread_stack, sizeof(main_thread_stack), 15, 15, TX_NO_TIME_SLICE, TX_AUTO_START);
 }
