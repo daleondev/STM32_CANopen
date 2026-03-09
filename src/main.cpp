@@ -64,15 +64,17 @@ int main(void)
 
 void tx_main()
 {
-  TX_THREAD main_thread;
-  UCHAR main_thread_stack[4096];
+  static TX_THREAD main_thread;
+  static UCHAR main_thread_stack[4096];
 
-  CHAR thread_name[] = "Main Thread";
+  static CHAR thread_name[] = "Main Thread";
   tx_thread_create(&main_thread, thread_name, [](ULONG entry_input)
                    {
+    constexpr auto ticks_per_ms = TX_TIMER_TICKS_PER_SECOND / 1000;
     while (true)
     {
       BSP_LED_Toggle(LED_GREEN);
-      tx_thread_sleep(100);
+      BSP_LED_Toggle(LED_RED);
+      tx_thread_sleep(1000 / ticks_per_ms);
     } }, 0, main_thread_stack, sizeof(main_thread_stack), 15, 15, TX_NO_TIME_SLICE, TX_AUTO_START);
 }
