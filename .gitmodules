@@ -1,0 +1,15 @@
+[submodule "extern/threadx"]
+	path = extern/threadx
+	url = https://github.com/eclipse-threadx/threadx.git
+[submodule "extern/stm32h7xx-hal-driver"]
+	path = extern/stm32h7xx-hal-driver
+	url = https://github.com/STMicroelectronics/stm32h7xx-hal-driver.git
+[submodule "extern/cmsis-core"]
+	path = extern/cmsis-core
+	url = https://github.com/STMicroelectronics/cmsis-core.git
+[submodule "extern/cmsis-device-h7"]
+	path = extern/cmsis-device-h7
+	url = https://github.com/STMicroelectronics/cmsis-device-h7.git
+[submodule "extern/stm32h7xx-nucleo-bsp"]
+	path = extern/stm32h7xx-nucleo-bsp
+	url = https://github.com/STMicroelectronics/stm32h7xx-nucleo-bsp.git
