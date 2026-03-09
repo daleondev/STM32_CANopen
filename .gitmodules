@@ -13,3 +13,6 @@
 [submodule "extern/stm32h7xx-nucleo-bsp"]
 	path = extern/stm32h7xx-nucleo-bsp
 	url = https://github.com/STMicroelectronics/stm32h7xx-nucleo-bsp.git
+[submodule "extern/lely/lely-core"]
+	path = extern/lely/lely-core
+	url = https://gitlab.com/lely_industries/lely-core.git

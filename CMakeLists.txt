@@ -1,15 +1,15 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(CANopenApp LANGUAGES CXX C ASM)
 set(CMAKE_PROJECT_NAME CANopenApp)
+project(${CMAKE_PROJECT_NAME} LANGUAGES CXX C ASM)
 
-set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/extern/lely)
 
 # --- Executable ---
-add_executable(CANopenApp src/main.cpp)
+add_executable(${CMAKE_PROJECT_NAME} src/main.cpp)
 
 # --- Sources ---
-target_sources(CANopenApp 
+target_sources(${CMAKE_PROJECT_NAME} 
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
 
@@ -29,7 +29,7 @@ target_sources(CANopenApp
 )
 
 # --- Includes ---
-target_include_directories(CANopenApp 
+target_include_directories(${CMAKE_PROJECT_NAME} 
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/extern/CubeMX/Inc
@@ -40,20 +40,21 @@ target_include_directories(CANopenApp
 set(TX_USER_FILE ${CMAKE_CURRENT_SOURCE_DIR}/extern/CubeMX/Inc/tx_user.h)
 include("STM32H753ZITX.cmake")
 
-target_link_libraries(CANopenApp 
+target_link_libraries(${CMAKE_PROJECT_NAME} 
     PRIVATE
         Platform
+        CANopen
 )
 
-target_compile_features(CANopenApp
+target_compile_features(${CMAKE_PROJECT_NAME}
     PUBLIC
         cxx_std_20
 )
 
 # --- Post-build steps ---
-add_custom_command(TARGET CANopenApp POST_BUILD
-    COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:CANopenApp> CANopenApp.hex
-    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:CANopenApp> CANopenApp.bin
-    COMMAND ${CMAKE_SIZE} $<TARGET_FILE:CANopenApp>
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${CMAKE_PROJECT_NAME}.hex
+    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${CMAKE_PROJECT_NAME}.bin
+    COMMAND ${CMAKE_SIZE} $<TARGET_FILE:${CMAKE_PROJECT_NAME}>
     COMMENT "Generating hex and bin files, and printing size"
 )

@@ -1,0 +1,173 @@
+#ifndef LELY_THREADX_STD_THREAD_H_
+#define LELY_THREADX_STD_THREAD_H_
+
+#include <lely/libc/threads.h>
+
+#include <chrono>
+#include <exception>
+#include <functional>
+#include <memory>
+#include <system_error>
+#include <utility>
+
+namespace std
+{
+
+    class thread
+    {
+    public:
+        using native_handle_type = ::thrd_t;
+
+        thread() noexcept = default;
+
+        thread(const thread &) = delete;
+        thread &operator=(const thread &) = delete;
+
+        thread(thread &&other) noexcept : thr_(other.thr_)
+        {
+            other.thr_ = nullptr;
+        }
+
+        thread &operator=(thread &&other) noexcept
+        {
+            if (this != &other)
+            {
+                if (joinable())
+                    std::terminate();
+                thr_ = other.thr_;
+                other.thr_ = nullptr;
+            }
+            return *this;
+        }
+
+        template <class Fn, class... Args>
+        explicit thread(Fn &&fn, Args &&...args) : thr_(nullptr)
+        {
+            Start(std::bind(std::forward<Fn>(fn), std::forward<Args>(args)...));
+        }
+
+        ~thread()
+        {
+            if (joinable())
+                std::terminate();
+        }
+
+        bool joinable() const noexcept
+        {
+            return thr_ != nullptr;
+        }
+
+        void join()
+        {
+            if (!joinable())
+            {
+                throw std::system_error(std::make_error_code(std::errc::invalid_argument),
+                                        "thread::join");
+            }
+
+            if (::thrd_join(thr_, nullptr) != ::thrd_success)
+            {
+                throw std::system_error(
+                    std::make_error_code(std::errc::resource_deadlock_would_occur),
+                    "thread::join");
+            }
+
+            thr_ = nullptr;
+        }
+
+        void detach()
+        {
+            if (!joinable())
+            {
+                throw std::system_error(std::make_error_code(std::errc::invalid_argument),
+                                        "thread::detach");
+            }
+
+            if (::thrd_detach(thr_) != ::thrd_success)
+            {
+                throw std::system_error(std::make_error_code(std::errc::invalid_argument),
+                                        "thread::detach");
+            }
+
+            thr_ = nullptr;
+        }
+
+        native_handle_type native_handle() noexcept
+        {
+            return thr_;
+        }
+
+        void swap(thread &other) noexcept
+        {
+            std::swap(thr_, other.thr_);
+        }
+
+        static unsigned hardware_concurrency() noexcept
+        {
+            return 1u;
+        }
+
+    private:
+        struct State
+        {
+            explicit State(std::function<void()> fn_) : fn(std::move(fn_)) {}
+            std::function<void()> fn;
+        };
+
+        template <class Callable>
+        void Start(Callable &&callable)
+        {
+            std::unique_ptr<State> state(
+                new State(std::function<void()>(std::forward<Callable>(callable))));
+
+            if (::thrd_create(&thr_, &thread::Run, state.get()) != ::thrd_success)
+            {
+                throw std::system_error(
+                    std::make_error_code(std::errc::resource_unavailable_try_again),
+                    "thrd_create");
+            }
+
+            state.release();
+        }
+
+        static int Run(void *arg)
+        {
+            std::unique_ptr<State> state(static_cast<State *>(arg));
+            state->fn();
+            return 0;
+        }
+
+        native_handle_type thr_{nullptr};
+    };
+
+    inline void swap(thread &lhs, thread &rhs) noexcept
+    {
+        lhs.swap(rhs);
+    }
+
+    namespace this_thread
+    {
+
+        inline void yield() noexcept
+        {
+            ::thrd_yield();
+        }
+
+        template <class Rep, class Period>
+        void sleep_for(const std::chrono::duration<Rep, Period> &duration)
+        {
+            if (duration <= duration.zero())
+                return;
+
+            const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(duration);
+            struct timespec ts;
+            ts.tv_sec = static_cast<time_t>(ns.count() / 1000000000ll);
+            ts.tv_nsec = static_cast<long>(ns.count() % 1000000000ll);
+            ::thrd_sleep(&ts, nullptr);
+        }
+
+    } // namespace this_thread
+
+} // namespace std
+
+#endif // LELY_THREADX_STD_THREAD_H_
