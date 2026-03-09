@@ -226,7 +226,7 @@ namespace
     class LogSink
     {
     public:
-        explicit LogSink(KitCAT::samples::ThreadXCia402Logger *logger)
+        explicit LogSink(ThreadXCia402Logger *logger)
             : logger_(logger)
         {
         }
@@ -244,7 +244,7 @@ namespace
         }
 
     private:
-        KitCAT::samples::ThreadXCia402Logger *logger_{};
+        ThreadXCia402Logger *logger_{};
     };
 
     class TimerPump
@@ -333,7 +333,7 @@ namespace
 
         Cia402Driver(lely::canopen::AsyncMaster &master,
                      uint8_t node_id,
-                     KitCAT::samples::ThreadXCia402Config config,
+                     ThreadXCia402Config config,
                      CompletedHandler on_completed,
                      FailedHandler on_failed,
                      const LogSink &log)
@@ -597,7 +597,7 @@ namespace
         void OnDeconfig(std::function<void(std::error_code ec)> res) noexcept override { res({}); }
 
         lely::canopen::AsyncMaster &master_;
-        KitCAT::samples::ThreadXCia402Config config_;
+        ThreadXCia402Config config_;
         CompletedHandler on_completed_;
         FailedHandler on_failed_;
         const LogSink &log_;
@@ -605,225 +605,220 @@ namespace
 
 } // namespace
 
-namespace KitCAT::samples
+class ThreadXCia402MotorApp::Impl
 {
-
-    class ThreadXCia402MotorApp::Impl
+public:
+    class CanChannelBridge final : public ThreadXCanReceiver
     {
     public:
-        class CanChannelBridge final : public ThreadXCanReceiver
+        // This bridge isolates the board CAN driver from Lely's user-space
+        // channel. RX frames are queued first so they are not injected into
+        // Lely from an arbitrary hardware callback context.
+        CanChannelBridge(lely::io::Context &ctx,
+                         lely::ev::Executor exec,
+                         ThreadXCanPort &port,
+                         const ThreadXCia402Config &config,
+                         const LogSink &log)
+            : port_(port),
+              log_(log),
+              queue_storage_(kQueueMessageWords * config.rx_queue_depth),
+              channel_(ctx, exec, lely::io::CanBusFlag::NONE, config.rx_queue_depth, 0, &WriteFrame, this),
+              priority_(config.transport_thread_priority)
         {
-        public:
-            // This bridge isolates the board CAN driver from Lely's user-space
-            // channel. RX frames are queued first so they are not injected into
-            // Lely from an arbitrary hardware callback context.
-            CanChannelBridge(lely::io::Context &ctx,
-                             lely::ev::Executor exec,
-                             ThreadXCanPort &port,
-                             const ThreadXCia402Config &config,
-                             const LogSink &log)
-                : port_(port),
-                  log_(log),
-                  queue_storage_(kQueueMessageWords * config.rx_queue_depth),
-                  channel_(ctx, exec, lely::io::CanBusFlag::NONE, config.rx_queue_depth, 0, &WriteFrame, this),
-                  priority_(config.transport_thread_priority)
+            port_.SetReceiver(this);
+
+            const auto queue_status = tx_queue_create(&queue_,
+                                                      const_cast<char *>("lely_can_rx"),
+                                                      static_cast<UINT>(kQueueMessageWords),
+                                                      queue_storage_.data(),
+                                                      static_cast<ULONG>(queue_storage_.size() * sizeof(ULONG)));
+            ThrowIf(queue_status != TX_SUCCESS, "unable to create ThreadX CAN receive queue");
+
+            const auto thread_status = tx_thread_create(&thread_,
+                                                        const_cast<char *>("lely_can_rx"),
+                                                        &ThreadEntry,
+                                                        reinterpret_cast<ULONG>(this),
+                                                        stack_.data(),
+                                                        sizeof(stack_),
+                                                        priority_,
+                                                        priority_,
+                                                        TX_NO_TIME_SLICE,
+                                                        TX_AUTO_START);
+            ThrowIf(thread_status != TX_SUCCESS, "unable to create ThreadX CAN receive thread");
+
+            ThrowIf(!port_.Start(), "unable to start ThreadX CAN port");
+        }
+
+        ~CanChannelBridge()
+        {
+            Stop();
+        }
+
+        lely::io::UserCanChannel &channel() noexcept
+        {
+            return channel_;
+        }
+
+        bool OnCanMessage(const can_msg &msg) override
+        {
+            // Copy the frame into a ThreadX queue message so the worker
+            // thread can forward it into Lely later.
+            std::array<ULONG, kQueueMessageWords> words{};
+            std::memcpy(words.data(), &msg, sizeof(msg));
+            return tx_queue_send(&queue_, words.data(), TX_NO_WAIT) == TX_SUCCESS;
+        }
+
+        void Stop()
+        {
+            if (!started_)
+                return;
+
+            port_.Stop();
+            running_ = false;
+            while (!stopped_)
+                tx_thread_sleep(kThreadSleepTicks);
+
+            tx_thread_terminate(&thread_);
+            tx_thread_delete(&thread_);
+            tx_queue_delete(&queue_);
+            started_ = false;
+        }
+
+    private:
+        static int WriteFrame(const can_msg *msg, int timeout, void *arg)
+        {
+            // Outbound frames go straight to the board-specific CAN backend.
+            auto *self = static_cast<CanChannelBridge *>(arg);
+            return self->port_.Write(*msg, MillisecondsToTicks(timeout)) ? 0 : -1;
+        }
+
+        static void ThreadEntry(ULONG arg)
+        {
+            static_cast<CanChannelBridge *>(reinterpret_cast<void *>(arg))->Run();
+        }
+
+        void Run()
+        {
+            std::array<ULONG, kQueueMessageWords> words{};
+
+            // Drain queued hardware frames and inject them into Lely from a
+            // normal ThreadX thread context.
+            while (running_)
             {
-                port_.SetReceiver(this);
-
-                const auto queue_status = tx_queue_create(&queue_,
-                                                          const_cast<char *>("lely_can_rx"),
-                                                          static_cast<UINT>(kQueueMessageWords),
-                                                          queue_storage_.data(),
-                                                          static_cast<ULONG>(queue_storage_.size() * sizeof(ULONG)));
-                ThrowIf(queue_status != TX_SUCCESS, "unable to create ThreadX CAN receive queue");
-
-                const auto thread_status = tx_thread_create(&thread_,
-                                                            const_cast<char *>("lely_can_rx"),
-                                                            &ThreadEntry,
-                                                            reinterpret_cast<ULONG>(this),
-                                                            stack_.data(),
-                                                            sizeof(stack_),
-                                                            priority_,
-                                                            priority_,
-                                                            TX_NO_TIME_SLICE,
-                                                            TX_AUTO_START);
-                ThrowIf(thread_status != TX_SUCCESS, "unable to create ThreadX CAN receive thread");
-
-                ThrowIf(!port_.Start(), "unable to start ThreadX CAN port");
-            }
-
-            ~CanChannelBridge()
-            {
-                Stop();
-            }
-
-            lely::io::UserCanChannel &channel() noexcept
-            {
-                return channel_;
-            }
-
-            bool OnCanMessage(const can_msg &msg) override
-            {
-                // Copy the frame into a ThreadX queue message so the worker
-                // thread can forward it into Lely later.
-                std::array<ULONG, kQueueMessageWords> words{};
-                std::memcpy(words.data(), &msg, sizeof(msg));
-                return tx_queue_send(&queue_, words.data(), TX_NO_WAIT) == TX_SUCCESS;
-            }
-
-            void Stop()
-            {
-                if (!started_)
-                    return;
-
-                port_.Stop();
-                running_ = false;
-                while (!stopped_)
-                    tx_thread_sleep(kThreadSleepTicks);
-
-                tx_thread_terminate(&thread_);
-                tx_thread_delete(&thread_);
-                tx_queue_delete(&queue_);
-                started_ = false;
-            }
-
-        private:
-            static int WriteFrame(const can_msg *msg, int timeout, void *arg)
-            {
-                // Outbound frames go straight to the board-specific CAN backend.
-                auto *self = static_cast<CanChannelBridge *>(arg);
-                return self->port_.Write(*msg, MillisecondsToTicks(timeout)) ? 0 : -1;
-            }
-
-            static void ThreadEntry(ULONG arg)
-            {
-                static_cast<CanChannelBridge *>(reinterpret_cast<void *>(arg))->Run();
-            }
-
-            void Run()
-            {
-                std::array<ULONG, kQueueMessageWords> words{};
-
-                // Drain queued hardware frames and inject them into Lely from a
-                // normal ThreadX thread context.
-                while (running_)
+                const auto status = tx_queue_receive(&queue_, words.data(), kThreadSleepTicks);
+                if (status == TX_QUEUE_EMPTY)
+                    continue;
+                if (status != TX_SUCCESS)
                 {
-                    const auto status = tx_queue_receive(&queue_, words.data(), kThreadSleepTicks);
-                    if (status == TX_QUEUE_EMPTY)
-                        continue;
-                    if (status != TX_SUCCESS)
-                    {
-                        log_.Error("ThreadX CAN queue receive failed");
-                        continue;
-                    }
-
-                    can_msg msg CAN_MSG_INIT;
-                    std::memcpy(&msg, words.data(), sizeof(msg));
-                    try
-                    {
-                        channel_.on_read(&msg);
-                    }
-                    catch (...)
-                    {
-                        log_.Error("Unable to inject CAN frame into Lely channel");
-                    }
+                    log_.Error("ThreadX CAN queue receive failed");
+                    continue;
                 }
 
-                stopped_ = true;
+                can_msg msg CAN_MSG_INIT;
+                std::memcpy(&msg, words.data(), sizeof(msg));
+                try
+                {
+                    channel_.on_read(&msg);
+                }
+                catch (...)
+                {
+                    log_.Error("Unable to inject CAN frame into Lely channel");
+                }
             }
 
-            ThreadXCanPort &port_;
-            const LogSink &log_;
-            std::vector<ULONG> queue_storage_;
-            lely::io::UserCanChannel channel_;
-            UINT priority_{};
-            TX_QUEUE queue_{};
-            TX_THREAD thread_{};
-            alignas(ULONG) std::array<std::byte, kTransportStackSize> stack_{};
-            std::atomic<bool> running_{true};
-            std::atomic<bool> stopped_{false};
-            bool started_{true};
-        };
+            stopped_ = true;
+        }
 
-        Impl(ThreadXCia402Config config,
-             ThreadXCanPort &can_port,
-             ThreadXCia402Logger *logger)
-            : config_(config),
-              log_(logger),
-              ctx_(),
-              loop_(),
-              timer_(ctx_, loop_.get_executor(), config.timer_thread_priority, log_),
-              channel_(ctx_, loop_.get_executor(), can_port, config_, log_),
-              master_(timer_.timer(), channel_.channel(), CreateMasterDictionary(config.master_id), config.master_id),
-              driver_(master_, config.node_id, config_, [this]()
-                      {
+        ThreadXCanPort &port_;
+        const LogSink &log_;
+        std::vector<ULONG> queue_storage_;
+        lely::io::UserCanChannel channel_;
+        UINT priority_{};
+        TX_QUEUE queue_{};
+        TX_THREAD thread_{};
+        alignas(ULONG) std::array<std::byte, kTransportStackSize> stack_{};
+        std::atomic<bool> running_{true};
+        std::atomic<bool> stopped_{false};
+        bool started_{true};
+    };
+
+    Impl(ThreadXCia402Config config,
+         ThreadXCanPort &can_port,
+         ThreadXCia402Logger *logger)
+        : config_(config),
+          log_(logger),
+          ctx_(),
+          loop_(),
+          timer_(ctx_, loop_.get_executor(), config.timer_thread_priority, log_),
+          channel_(ctx_, loop_.get_executor(), can_port, config_, log_),
+          master_(timer_.timer(), channel_.channel(), CreateMasterDictionary(config.master_id), config.master_id),
+          driver_(master_, config.node_id, config_, [this]()
+                  {
                           result_ = 0;
                           ctx_.shutdown(); }, [this](const std::string &message)
-                      {
+                  {
                           result_ = 1;
                           last_error_ = message;
                           log_.Error(message);
                           ctx_.shutdown(); }, log_)
-        {
-        }
-
-        int Run()
-        {
-            // Startup is small on purpose: validate input, reset the master,
-            // launch the driver and let the event loop run until completion.
-            ThrowIf(config_.node_id == 0 || config_.node_id > 127, "node-id must be in the range 1..127");
-
-            master_.Reset();
-            driver_.Start();
-            loop_.run();
-
-            if (result_ != 0 && !last_error_.empty())
-                log_.Error(last_error_);
-
-            return result_;
-        }
-
-        void RequestStop()
-        {
-            // External callers can request a cooperative shutdown of the sample.
-            result_ = 1;
-            last_error_ = "stopped by caller";
-            ctx_.shutdown();
-        }
-
-        ThreadXCia402Config config_;
-        LogSink log_;
-        lely::io::Context ctx_;
-        lely::ev::Loop loop_;
-        TimerPump timer_;
-        CanChannelBridge channel_;
-        lely::canopen::AsyncMaster master_;
-        Cia402Driver driver_;
-        int result_{1};
-        std::string last_error_;
-    };
-
-    ThreadXCia402MotorApp::ThreadXCia402MotorApp(ThreadXCia402Config config,
-                                                 ThreadXCanPort &can_port,
-                                                 ThreadXCia402Logger *logger)
-        : impl_(std::make_unique<Impl>(config, can_port, logger))
     {
     }
 
-    ThreadXCia402MotorApp::~ThreadXCia402MotorApp() = default;
-
-    ThreadXCia402MotorApp::ThreadXCia402MotorApp(ThreadXCia402MotorApp &&) noexcept = default;
-
-    ThreadXCia402MotorApp &ThreadXCia402MotorApp::operator=(ThreadXCia402MotorApp &&) noexcept = default;
-
-    int ThreadXCia402MotorApp::Run()
+    int Run()
     {
-        return impl_->Run();
+        // Startup is small on purpose: validate input, reset the master,
+        // launch the driver and let the event loop run until completion.
+        ThrowIf(config_.node_id == 0 || config_.node_id > 127, "node-id must be in the range 1..127");
+
+        master_.Reset();
+        driver_.Start();
+        loop_.run();
+
+        if (result_ != 0 && !last_error_.empty())
+            log_.Error(last_error_);
+
+        return result_;
     }
 
-    void ThreadXCia402MotorApp::RequestStop()
+    void RequestStop()
     {
-        impl_->RequestStop();
+        // External callers can request a cooperative shutdown of the sample.
+        result_ = 1;
+        last_error_ = "stopped by caller";
+        ctx_.shutdown();
     }
 
-} // namespace KitCAT::samples
+    ThreadXCia402Config config_;
+    LogSink log_;
+    lely::io::Context ctx_;
+    lely::ev::Loop loop_;
+    TimerPump timer_;
+    CanChannelBridge channel_;
+    lely::canopen::AsyncMaster master_;
+    Cia402Driver driver_;
+    int result_{1};
+    std::string last_error_;
+};
+
+ThreadXCia402MotorApp::ThreadXCia402MotorApp(ThreadXCia402Config config,
+                                             ThreadXCanPort &can_port,
+                                             ThreadXCia402Logger *logger)
+    : impl_(std::make_unique<Impl>(config, can_port, logger))
+{
+}
+
+ThreadXCia402MotorApp::~ThreadXCia402MotorApp() = default;
+
+ThreadXCia402MotorApp::ThreadXCia402MotorApp(ThreadXCia402MotorApp &&) noexcept = default;
+
+ThreadXCia402MotorApp &ThreadXCia402MotorApp::operator=(ThreadXCia402MotorApp &&) noexcept = default;
+
+int ThreadXCia402MotorApp::Run()
+{
+    return impl_->Run();
+}
+
+void ThreadXCia402MotorApp::RequestStop()
+{
+    impl_->RequestStop();
+}

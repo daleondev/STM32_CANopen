@@ -15,6 +15,7 @@ file(GLOB_RECURSE LELY_CORE_SOURCES
     "${LELY_CORE_DIR}/src/coapp/*.cpp"
 )
 list(FILTER LELY_CORE_SOURCES EXCLUDE REGEX "/src/io2/(linux|posix|win32)/.*\\.c$")
+list(FILTER LELY_CORE_SOURCES EXCLUDE REGEX "/src/libc/time\\.c$")
 
 target_sources(CANopen
     PRIVATE
@@ -25,10 +26,11 @@ target_sources(CANopen
 
 target_include_directories(CANopen
     BEFORE
+    PRIVATE
+        ${LELY_PORT_DIR}/cxxshim
+        ${LELY_CORE_DIR}/src
     PUBLIC
         ${LELY_PORT_DIR}/include
-    PRIVATE
-        ${LELY_CORE_DIR}/src
     PUBLIC
         ${LELY_CORE_DIR}/include
 )

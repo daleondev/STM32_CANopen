@@ -6,12 +6,13 @@ project(${CMAKE_PROJECT_NAME} LANGUAGES CXX C ASM)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/extern/lely)
 
 # --- Executable ---
-add_executable(${CMAKE_PROJECT_NAME} src/main.cpp)
+add_executable(${CMAKE_PROJECT_NAME})
 
 # --- Sources ---
 target_sources(${CMAKE_PROJECT_NAME} 
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/canopen_cia402_motor_threadx.cpp
 
         ${CMAKE_CURRENT_SOURCE_DIR}/extern/CubeMX/Src/main.c
         ${CMAKE_CURRENT_SOURCE_DIR}/extern/CubeMX/Src/gpio.c

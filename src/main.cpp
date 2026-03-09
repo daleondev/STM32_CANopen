@@ -6,6 +6,12 @@
 
 #include <tx_api.h>
 
+#include <cstdio>
+#include <exception>
+#include <string_view>
+
+#include "canopen_cia402_motor_threadx.hpp"
+
 extern "C"
 {
   extern COM_InitTypeDef BspCOMInit;
@@ -14,6 +20,84 @@ extern "C"
 }
 
 void tx_main();
+
+namespace
+{
+
+  class MainThreadLogger final : public ThreadXCia402Logger
+  {
+  public:
+    void Info(std::string_view message) override
+    {
+      std::printf("[CiA402] %.*s\r\n", static_cast<int>(message.size()), message.data());
+    }
+
+    void Error(std::string_view message) override
+    {
+      std::printf("[CiA402][ERR] %.*s\r\n", static_cast<int>(message.size()), message.data());
+    }
+  };
+
+  class UnconfiguredCanPort final : public ThreadXCanPort
+  {
+  public:
+    explicit UnconfiguredCanPort(ThreadXCia402Logger &logger)
+        : logger_(logger)
+    {
+    }
+
+    void SetReceiver(ThreadXCanReceiver *receiver) override
+    {
+      receiver_ = receiver;
+      (void)receiver_;
+    }
+
+    bool Start() override
+    {
+      logger_.Error("No CAN/FDCAN backend is configured yet. Enable and implement a hardware CAN port.");
+      return false;
+    }
+
+    void Stop() override {}
+
+    bool Write(const can_msg &msg, ULONG timeout_ticks) override
+    {
+      (void)msg;
+      (void)timeout_ticks;
+      logger_.Error("CAN write requested, but no CAN/FDCAN backend is configured.");
+      return false;
+    }
+
+  private:
+    ThreadXCia402Logger &logger_;
+    ThreadXCanReceiver *receiver_{nullptr};
+  };
+
+  [[noreturn]] void BlinkStatus(bool success)
+  {
+    const ULONG delay = TX_TIMER_TICKS_PER_SECOND / 4 ? TX_TIMER_TICKS_PER_SECOND / 4 : 1;
+
+    BSP_LED_Off(LED_GREEN);
+    BSP_LED_Off(LED_RED);
+
+    while (true)
+    {
+      if (success)
+      {
+        BSP_LED_Toggle(LED_GREEN);
+        BSP_LED_Off(LED_RED);
+      }
+      else
+      {
+        BSP_LED_Toggle(LED_RED);
+        BSP_LED_Off(LED_GREEN);
+      }
+
+      tx_thread_sleep(delay);
+    }
+  }
+
+} // namespace
 
 void tx_application_define(void *first_unused_memory)
 {
@@ -70,11 +154,26 @@ void tx_main()
   static CHAR thread_name[] = "Main Thread";
   tx_thread_create(&main_thread, thread_name, [](ULONG entry_input)
                    {
-    constexpr auto ticks_per_ms = TX_TIMER_TICKS_PER_SECOND / 1000;
-    while (true)
+    (void)entry_input;
+
+    MainThreadLogger logger;
+    UnconfiguredCanPort can_port(logger);
+    ThreadXCia402Config config;
+
+    try
     {
-      BSP_LED_Toggle(LED_GREEN);
-      BSP_LED_Toggle(LED_RED);
-      tx_thread_sleep(1000 / ticks_per_ms);
-    } }, 0, main_thread_stack, sizeof(main_thread_stack), 15, 15, TX_NO_TIME_SLICE, TX_AUTO_START);
+      ThreadXCia402MotorApp app(config, can_port, &logger);
+      const int result = app.Run();
+      BlinkStatus(result == 0);
+    }
+    catch (const std::exception &e)
+    {
+      logger.Error(e.what());
+    }
+    catch (...)
+    {
+      logger.Error("Unknown exception in CiA402 main thread.");
+    }
+
+    BlinkStatus(false); }, 0, main_thread_stack, sizeof(main_thread_stack), 15, 15, TX_NO_TIME_SLICE, TX_AUTO_START);
 }
