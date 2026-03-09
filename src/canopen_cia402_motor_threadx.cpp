@@ -13,6 +13,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -191,10 +192,13 @@ namespace
     }
 
     __co_dev *
-    CreateMasterDictionary(uint8_t master_id)
+    CreateMasterDictionary(uint8_t master_id, uint8_t node_id)
     {
         // The sample only needs a tiny local dictionary for the CANopen master.
         // A larger application can replace this with a project-specific DCF.
+        // Objects 1F80 and 1F81 are required so Lely treats this node as a
+        // CANopen manager and boots the configured slave through the standard
+        // NMT 'boot slave' process.
         std::unique_ptr<co_dev_t, decltype(&co_dev_destroy)> dev(co_dev_create(master_id), &co_dev_destroy);
         ThrowIf(!dev, "unable to create CANopen master dictionary");
 
@@ -217,6 +221,21 @@ namespace
             AddSubU32(obj, 0x02, CO_ACCESS_RO, 0x00000000u, "Product code");
             AddSubU32(obj, 0x03, CO_ACCESS_RO, 0x00000000u, "Revision number");
             AddSubU32(obj, 0x04, CO_ACCESS_RO, 0x00000000u, "Serial number");
+            InsertObject(dev.get(), obj);
+        }
+
+        {
+            auto *obj = MakeObject(0x1f80, CO_OBJECT_VAR, "NMT startup");
+            AddSubU32(obj, 0x00, CO_ACCESS_RW, 0x00000001u, "NMT startup");
+            InsertObject(dev.get(), obj);
+        }
+
+        {
+            auto *obj = MakeObject(0x1f81, CO_OBJECT_ARRAY, "NMT slave assignment");
+            AddSubU8(obj, 0x00, CO_ACCESS_CONST, node_id, "Highest sub-index supported");
+            for (uint8_t i = 1; i < node_id; ++i)
+                AddSubU32(obj, i, CO_ACCESS_RW, 0x00000000u, nullptr);
+            AddSubU32(obj, node_id, CO_ACCESS_RW, 0x00000005u, "Booted slave assignment");
             InsertObject(dev.get(), obj);
         }
 
@@ -346,7 +365,10 @@ namespace
         {
         }
 
-        void Start()
+    private:
+        static constexpr int8_t kProfileVelocityMode = 3;
+
+        void StartSequence()
         {
             // The actual sequence must run on the FiberDriver strand so that
             // `Wait()` and `USleep()` suspend only this driver flow.
@@ -354,7 +376,9 @@ namespace
                   {
                       try
                       {
-                          Log(std::string{"Starting "} + kPumpName + " pump sample");
+                          char msg[96];
+                          std::snprintf(msg, sizeof(msg), "Starting %s pump sample", kPumpName);
+                          Log(msg);
                           USleep(config_.boot_settle_time_ms * 1000u);
                           master_.Command(lely::canopen::NmtCommand::ENTER_PREOP, id());
                           USleep(config_.boot_settle_time_ms * 1000u);
@@ -378,9 +402,6 @@ namespace
                       } });
         }
 
-    private:
-        static constexpr int8_t kProfileVelocityMode = 3;
-
         void RunPumpCycle()
         {
             // The sample is intentionally structured as a readable procedure:
@@ -395,9 +416,9 @@ namespace
             TransitionToOperationEnabled();
             StartPump();
 
-            std::ostringstream run_oss;
-            run_oss << "Pump running for " << config_.run_time_ms << " ms";
-            Log(run_oss.str());
+            char msg[64];
+            std::snprintf(msg, sizeof(msg), "Pump running for %lu ms", static_cast<unsigned long>(config_.run_time_ms));
+            Log(msg);
             USleep(config_.run_time_ms * 1000u);
 
             StopPump();
@@ -424,9 +445,13 @@ namespace
             Wait(AsyncWrite(kIdxModesOfOperation, 0x00, int8_t{kProfileVelocityMode}));
             WaitForMode(kProfileVelocityMode, 1s);
 
-            std::ostringstream oss;
-            oss << "Applying accel/decel ramps: " << config_.profile_acceleration << '/' << config_.profile_deceleration;
-            Log(oss.str());
+            char msg[96];
+            std::snprintf(msg,
+                          sizeof(msg),
+                          "Applying accel/decel ramps: %lu/%lu",
+                          static_cast<unsigned long>(config_.profile_acceleration),
+                          static_cast<unsigned long>(config_.profile_deceleration));
+            Log(msg);
 
             Wait(AsyncWrite(kIdxProfileAcceleration, 0x00, config_.profile_acceleration));
             Wait(AsyncWrite(kIdxProfileDeceleration, 0x00, config_.profile_deceleration));
@@ -453,9 +478,9 @@ namespace
         {
             // Command the run speed and wait until the reported feedback shows
             // that the motor has really started moving.
-            std::ostringstream oss;
-            oss << "Commanding target velocity " << config_.target_velocity;
-            Log(oss.str());
+            char msg[64];
+            std::snprintf(msg, sizeof(msg), "Commanding target velocity %ld", static_cast<long>(config_.target_velocity));
+            Log(msg);
 
             Wait(AsyncWrite(kIdxTargetVelocity, 0x00, config_.target_velocity));
             WaitForVelocity([](int32_t actual, int32_t target)
@@ -592,8 +617,32 @@ namespace
         void OnTime(const std::chrono::system_clock::time_point &) noexcept override {}
         void OnEmcy(uint16_t, uint8_t, uint8_t[5]) noexcept override {}
         void OnNodeGuarding(bool) noexcept override {}
-        void OnBoot(lely::canopen::NmtState, char, const std::string &) noexcept override {}
-        void OnConfig(std::function<void(std::error_code ec)> res) noexcept override { res({}); }
+        void OnBoot(lely::canopen::NmtState, char es, const std::string &what) noexcept override
+        {
+            if (es)
+            {
+                std::ostringstream oss;
+                oss << "boot failed for node " << unsigned(id()) << " (" << es << ')';
+                if (!what.empty())
+                    oss << ": " << what;
+                if (on_failed_)
+                    on_failed_(oss.str());
+                return;
+            }
+
+            if (sequence_started_)
+                return;
+
+            sequence_started_ = true;
+            Log("Slave booted successfully");
+            StartSequence();
+        }
+
+        void OnConfig(std::function<void(std::error_code ec)> res) noexcept override
+        {
+            Defer([res = std::move(res)]() mutable
+                  { res({}); });
+        }
         void OnDeconfig(std::function<void(std::error_code ec)> res) noexcept override { res({}); }
 
         lely::canopen::AsyncMaster &master_;
@@ -601,6 +650,7 @@ namespace
         CompletedHandler on_completed_;
         FailedHandler on_failed_;
         const LogSink &log_;
+        bool sequence_started_{false};
     };
 
 } // namespace
@@ -774,13 +824,12 @@ public:
          ThreadXCanPort &can_port,
          ThreadXCia402Logger *logger)
         : config_(config),
-          can_port_(can_port),
           log_(logger),
           ctx_(),
           loop_(),
           timer_(ctx_, loop_.get_executor(), config.timer_thread_priority, log_),
           channel_(ctx_, loop_.get_executor(), can_port, config_, log_),
-          master_(timer_.timer(), channel_.channel(), CreateMasterDictionary(config.master_id), config.master_id),
+          master_(timer_.timer(), channel_.channel(), CreateMasterDictionary(config.master_id, config.node_id), config.master_id),
           driver_(master_, config.node_id, config_, [this]()
                   {
                           result_ = 0;
@@ -796,16 +845,15 @@ public:
 
     int Run()
     {
-        // Startup is small on purpose: validate input, reset the master,
-        // launch the driver and let the event loop run until completion.
+        // Startup is small on purpose: validate input, reset the master and
+        // let the standard Lely boot/configuration flow drive the sequence.
         ThrowIf(config_.node_id == 0 || config_.node_id > 127, "node-id must be in the range 1..127");
 
-        if (can_port_.IsSimulated())
-            return RunSimulated();
-
+        log_.Info("Resetting CANopen master");
         master_.Reset();
-        driver_.Start();
+        log_.Info("Entering Lely event loop");
         loop_.run();
+        log_.Info("Lely event loop exited");
 
         if (result_ != 0 && !last_error_.empty())
             log_.Error(last_error_);
@@ -821,52 +869,6 @@ public:
         ctx_.shutdown();
     }
 
-private:
-    int RunSimulated()
-    {
-        log_.Info(std::string{"Starting "} + kPumpName + " pump sample (simulated)");
-        tx_thread_sleep(MillisecondsToTicks(static_cast<int>(config_.boot_settle_time_ms)));
-
-        log_.Info("Configuring profile velocity mode");
-        {
-            std::ostringstream oss;
-            oss << "Applying accel/decel ramps: " << config_.profile_acceleration << '/' << config_.profile_deceleration;
-            log_.Info(oss.str());
-        }
-
-        log_.Info("Putting node into NMT operational");
-        tx_thread_sleep(MillisecondsToTicks(100));
-
-        log_.Info("Transitioning drive to ready-to-switch-on");
-        tx_thread_sleep(MillisecondsToTicks(50));
-        log_.Info("Transitioning drive to switched-on");
-        tx_thread_sleep(MillisecondsToTicks(50));
-        log_.Info("Transitioning drive to operation-enabled");
-        tx_thread_sleep(MillisecondsToTicks(50));
-
-        {
-            std::ostringstream oss;
-            oss << "Commanding target velocity " << config_.target_velocity;
-            log_.Info(oss.str());
-        }
-
-        {
-            std::ostringstream oss;
-            oss << "Pump running for " << config_.run_time_ms << " ms";
-            log_.Info(oss.str());
-        }
-        tx_thread_sleep(MillisecondsToTicks(static_cast<int>(config_.run_time_ms)));
-
-        log_.Info("Commanding zero velocity");
-        tx_thread_sleep(MillisecondsToTicks(200));
-        log_.Info("Returning drive to shutdown state");
-        tx_thread_sleep(MillisecondsToTicks(50));
-        log_.Info("Pump sample completed");
-
-        return 0;
-    }
-
-    ThreadXCanPort &can_port_;
     ThreadXCia402Config config_;
     LogSink log_;
     lely::io::Context ctx_;
