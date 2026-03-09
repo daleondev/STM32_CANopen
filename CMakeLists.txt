@@ -13,6 +13,7 @@ target_sources(${CMAKE_PROJECT_NAME}
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/canopen_cia402_motor_threadx.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/simulated_can_port.cpp
 
         ${CMAKE_CURRENT_SOURCE_DIR}/extern/CubeMX/Src/main.c
         ${CMAKE_CURRENT_SOURCE_DIR}/extern/CubeMX/Src/gpio.c

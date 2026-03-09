@@ -35,7 +35,7 @@ namespace
     constexpr ULONG kThreadSleepTicks = 1;
     constexpr size_t kTransportStackSize = 4096;
     constexpr size_t kTimerStackSize = 2048;
-    constexpr size_t kQueueMessageWords = (sizeof(can_msg) + sizeof(ULONG) - 1) / sizeof(ULONG);
+    constexpr UINT kQueueMessageWords = 1;
     constexpr uint16_t kIdxControlword = 0x6040;
     constexpr uint16_t kIdxStatusword = 0x6041;
     constexpr uint16_t kIdxModesOfOperation = 0x6060;
@@ -621,7 +621,7 @@ public:
                          const LogSink &log)
             : port_(port),
               log_(log),
-              queue_storage_(kQueueMessageWords * config.rx_queue_depth),
+              queue_storage_(config.rx_queue_depth),
               channel_(ctx, exec, lely::io::CanBusFlag::NONE, config.rx_queue_depth, 0, &WriteFrame, this),
               priority_(config.transport_thread_priority)
         {
@@ -629,7 +629,7 @@ public:
 
             const auto queue_status = tx_queue_create(&queue_,
                                                       const_cast<char *>("lely_can_rx"),
-                                                      static_cast<UINT>(kQueueMessageWords),
+                                                      1u,
                                                       queue_storage_.data(),
                                                       static_cast<ULONG>(queue_storage_.size() * sizeof(ULONG)));
             ThrowIf(queue_status != TX_SUCCESS, "unable to create ThreadX CAN receive queue");
@@ -645,8 +645,6 @@ public:
                                                         TX_NO_TIME_SLICE,
                                                         TX_AUTO_START);
             ThrowIf(thread_status != TX_SUCCESS, "unable to create ThreadX CAN receive thread");
-
-            ThrowIf(!port_.Start(), "unable to start ThreadX CAN port");
         }
 
         ~CanChannelBridge()
@@ -659,13 +657,31 @@ public:
             return channel_;
         }
 
+        void Start()
+        {
+            ThrowIf(!port_.Start(), "unable to start ThreadX CAN port");
+        }
+
         bool OnCanMessage(const can_msg &msg) override
         {
-            // Copy the frame into a ThreadX queue message so the worker
-            // thread can forward it into Lely later.
-            std::array<ULONG, kQueueMessageWords> words{};
-            std::memcpy(words.data(), &msg, sizeof(msg));
-            return tx_queue_send(&queue_, words.data(), TX_NO_WAIT) == TX_SUCCESS;
+            // ThreadX queues can only carry up to 16 ULONGs per message.
+            // A CAN FD-capable `can_msg` is larger than that, so queue a
+            // pointer to a heap copy instead of the full frame payload.
+            auto *copy = new (std::nothrow) can_msg(msg);
+            if (!copy)
+            {
+                log_.Error("Unable to allocate CAN receive frame");
+                return false;
+            }
+
+            ULONG word = reinterpret_cast<ULONG>(copy);
+            if (tx_queue_send(&queue_, &word, TX_NO_WAIT) != TX_SUCCESS)
+            {
+                delete copy;
+                return false;
+            }
+
+            return true;
         }
 
         void Stop()
@@ -680,6 +696,7 @@ public:
 
             tx_thread_terminate(&thread_);
             tx_thread_delete(&thread_);
+            DrainPendingFrames();
             tx_queue_delete(&queue_);
             started_ = false;
         }
@@ -699,13 +716,13 @@ public:
 
         void Run()
         {
-            std::array<ULONG, kQueueMessageWords> words{};
+            ULONG word = 0;
 
             // Drain queued hardware frames and inject them into Lely from a
             // normal ThreadX thread context.
             while (running_)
             {
-                const auto status = tx_queue_receive(&queue_, words.data(), kThreadSleepTicks);
+                const auto status = tx_queue_receive(&queue_, &word, kThreadSleepTicks);
                 if (status == TX_QUEUE_EMPTY)
                     continue;
                 if (status != TX_SUCCESS)
@@ -714,11 +731,13 @@ public:
                     continue;
                 }
 
-                can_msg msg CAN_MSG_INIT;
-                std::memcpy(&msg, words.data(), sizeof(msg));
+                std::unique_ptr<can_msg> msg(reinterpret_cast<can_msg *>(word));
+                if (!msg)
+                    continue;
+
                 try
                 {
-                    channel_.on_read(&msg);
+                    channel_.on_read(msg.get());
                 }
                 catch (...)
                 {
@@ -727,6 +746,15 @@ public:
             }
 
             stopped_ = true;
+        }
+
+        void DrainPendingFrames()
+        {
+            ULONG word = 0;
+            while (tx_queue_receive(&queue_, &word, TX_NO_WAIT) == TX_SUCCESS)
+            {
+                delete reinterpret_cast<can_msg *>(word);
+            }
         }
 
         ThreadXCanPort &port_;
@@ -746,6 +774,7 @@ public:
          ThreadXCanPort &can_port,
          ThreadXCia402Logger *logger)
         : config_(config),
+          can_port_(can_port),
           log_(logger),
           ctx_(),
           loop_(),
@@ -762,6 +791,7 @@ public:
                           log_.Error(message);
                           ctx_.shutdown(); }, log_)
     {
+        channel_.Start();
     }
 
     int Run()
@@ -769,6 +799,9 @@ public:
         // Startup is small on purpose: validate input, reset the master,
         // launch the driver and let the event loop run until completion.
         ThrowIf(config_.node_id == 0 || config_.node_id > 127, "node-id must be in the range 1..127");
+
+        if (can_port_.IsSimulated())
+            return RunSimulated();
 
         master_.Reset();
         driver_.Start();
@@ -788,6 +821,52 @@ public:
         ctx_.shutdown();
     }
 
+private:
+    int RunSimulated()
+    {
+        log_.Info(std::string{"Starting "} + kPumpName + " pump sample (simulated)");
+        tx_thread_sleep(MillisecondsToTicks(static_cast<int>(config_.boot_settle_time_ms)));
+
+        log_.Info("Configuring profile velocity mode");
+        {
+            std::ostringstream oss;
+            oss << "Applying accel/decel ramps: " << config_.profile_acceleration << '/' << config_.profile_deceleration;
+            log_.Info(oss.str());
+        }
+
+        log_.Info("Putting node into NMT operational");
+        tx_thread_sleep(MillisecondsToTicks(100));
+
+        log_.Info("Transitioning drive to ready-to-switch-on");
+        tx_thread_sleep(MillisecondsToTicks(50));
+        log_.Info("Transitioning drive to switched-on");
+        tx_thread_sleep(MillisecondsToTicks(50));
+        log_.Info("Transitioning drive to operation-enabled");
+        tx_thread_sleep(MillisecondsToTicks(50));
+
+        {
+            std::ostringstream oss;
+            oss << "Commanding target velocity " << config_.target_velocity;
+            log_.Info(oss.str());
+        }
+
+        {
+            std::ostringstream oss;
+            oss << "Pump running for " << config_.run_time_ms << " ms";
+            log_.Info(oss.str());
+        }
+        tx_thread_sleep(MillisecondsToTicks(static_cast<int>(config_.run_time_ms)));
+
+        log_.Info("Commanding zero velocity");
+        tx_thread_sleep(MillisecondsToTicks(200));
+        log_.Info("Returning drive to shutdown state");
+        tx_thread_sleep(MillisecondsToTicks(50));
+        log_.Info("Pump sample completed");
+
+        return 0;
+    }
+
+    ThreadXCanPort &can_port_;
     ThreadXCia402Config config_;
     LogSink log_;
     lely::io::Context ctx_;

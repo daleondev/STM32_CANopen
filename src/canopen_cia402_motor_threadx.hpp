@@ -58,6 +58,11 @@ class ThreadXCanPort
 public:
     virtual ~ThreadXCanPort() = default;
 
+    virtual bool IsSimulated() const
+    {
+        return false;
+    }
+
     // Called once during startup so the CAN backend knows where to deliver
     // received frames.
     virtual void SetReceiver(ThreadXCanReceiver *receiver) = 0;

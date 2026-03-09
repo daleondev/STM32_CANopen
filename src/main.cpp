@@ -11,6 +11,7 @@
 #include <string_view>
 
 #include "canopen_cia402_motor_threadx.hpp"
+#include "simulated_can_port.hpp"
 
 extern "C"
 {
@@ -36,41 +37,6 @@ namespace
     {
       std::printf("[CiA402][ERR] %.*s\r\n", static_cast<int>(message.size()), message.data());
     }
-  };
-
-  class UnconfiguredCanPort final : public ThreadXCanPort
-  {
-  public:
-    explicit UnconfiguredCanPort(ThreadXCia402Logger &logger)
-        : logger_(logger)
-    {
-    }
-
-    void SetReceiver(ThreadXCanReceiver *receiver) override
-    {
-      receiver_ = receiver;
-      (void)receiver_;
-    }
-
-    bool Start() override
-    {
-      logger_.Error("No CAN/FDCAN backend is configured yet. Enable and implement a hardware CAN port.");
-      return false;
-    }
-
-    void Stop() override {}
-
-    bool Write(const can_msg &msg, ULONG timeout_ticks) override
-    {
-      (void)msg;
-      (void)timeout_ticks;
-      logger_.Error("CAN write requested, but no CAN/FDCAN backend is configured.");
-      return false;
-    }
-
-  private:
-    ThreadXCia402Logger &logger_;
-    ThreadXCanReceiver *receiver_{nullptr};
   };
 
   [[noreturn]] void BlinkStatus(bool success)
@@ -157,8 +123,8 @@ void tx_main()
     (void)entry_input;
 
     MainThreadLogger logger;
-    UnconfiguredCanPort can_port(logger);
     ThreadXCia402Config config;
+    SimulatedCanPort can_port(config.node_id, &logger);
 
     try
     {

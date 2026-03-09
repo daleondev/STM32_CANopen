@@ -44,6 +44,7 @@ target_compile_definitions(CANopen
         LELY_HAVE_SOCKET_CAN=0
         LELY_HAVE_THREADS_H=1
         LELY_THREADX_STACK_SIZE=16384
+    NDEBUG=1
 )
 
 target_link_libraries(CANopen
