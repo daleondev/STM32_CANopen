@@ -20,6 +20,7 @@ namespace SerialCLI
     /* -------------------------------------------------------------------------- */
     static Interfaces::HLDriver::ICANopen *s_canopen = nullptr;
     static Interfaces::HLDriver::ICiA402 *s_motor = nullptr;
+    static Interfaces::HLDriver::INanotecPnD *s_nanotec = nullptr;
 
     /* -------------------------------------------------------------------------- */
     /* UART helpers                                                               */
@@ -107,6 +108,23 @@ namespace SerialCLI
             printf("  motor move <pos> [rel]            - Move to position (optional: rel)\r\n");
             printf("  motor velocity <vel>              - Set target velocity\r\n");
             printf("  motor fault-reset                 - Reset fault\r\n");
+        }
+        if (s_nanotec != nullptr)
+        {
+            printf("Nanotec Plug & Drive commands:\r\n");
+            printf("  nt config <nodeId> <peakI> <nomI> - Configure (current in mA)\r\n");
+            printf("  nt autosetup                      - Run auto setup (motor moves!)\r\n");
+            printf("  nt enable                         - Enable drive\r\n");
+            printf("  nt disable                        - Disable drive\r\n");
+            printf("  nt stop                           - Quick stop\r\n");
+            printf("  nt reset                          - Fault reset\r\n");
+            printf("  nt mode <mode>                    - Set mode (-1=auto,1=pp,3=pv)\r\n");
+            printf("  nt profile <vel> <acc> <dec>      - Set profile params\r\n");
+            printf("  nt move <pos> [rel]               - Position move\r\n");
+            printf("  nt vel <velocity>                 - Set target velocity\r\n");
+            printf("  nt halt                           - Halt motion\r\n");
+            printf("  nt status                         - Read drive status\r\n");
+            printf("  nt save                           - Save params to NVM\r\n");
         }
     }
 
@@ -407,6 +425,177 @@ namespace SerialCLI
     }
 
     /* -------------------------------------------------------------------------- */
+    /* Nanotec Plug & Drive command handlers                                    */
+    /* -------------------------------------------------------------------------- */
+    static void cmdNanotec(char *args)
+    {
+        if (s_nanotec == nullptr)
+        {
+            printf("Nanotec driver not available\r\n");
+            return;
+        }
+
+        char *subcmd = strtok(args, " ");
+        if (subcmd == nullptr)
+        {
+            printf("Usage: nt <config|autosetup|enable|disable|stop|reset|mode|"
+                   "profile|move|vel|halt|status|save>\r\n");
+            return;
+        }
+
+        if (strcmp(subcmd, "config") == 0)
+        {
+            char *nodeStr = strtok(nullptr, " ");
+            char *peakStr = strtok(nullptr, " ");
+            char *nomStr = strtok(nullptr, " ");
+            if (nodeStr == nullptr || peakStr == nullptr || nomStr == nullptr)
+            {
+                printf("Usage: nt config <nodeId> <peakCurrent_mA> <nomCurrent_mA>\r\n");
+                return;
+            }
+            auto nodeId = static_cast<uint8_t>(parseNumber(nodeStr));
+            auto peak = parseNumber(peakStr);
+            auto nom = parseNumber(nomStr);
+            bool ok = s_nanotec->configure(nodeId, peak, nom);
+            printf("nt config: %s\r\n", ok ? "OK" : "FAIL");
+        }
+        else if (strcmp(subcmd, "autosetup") == 0)
+        {
+            bool ok = s_nanotec->autoSetup();
+            printf("nt autosetup: %s\r\n", ok ? "OK" : "FAIL");
+        }
+        else if (strcmp(subcmd, "enable") == 0)
+        {
+            bool ok = s_nanotec->enable();
+            printf("nt enable: %s\r\n", ok ? "OK" : "FAIL");
+        }
+        else if (strcmp(subcmd, "disable") == 0)
+        {
+            bool ok = s_nanotec->disable();
+            printf("nt disable: %s\r\n", ok ? "OK" : "FAIL");
+        }
+        else if (strcmp(subcmd, "stop") == 0)
+        {
+            bool ok = s_nanotec->quickStop();
+            printf("nt stop: %s\r\n", ok ? "OK" : "FAIL");
+        }
+        else if (strcmp(subcmd, "reset") == 0)
+        {
+            bool ok = s_nanotec->faultReset();
+            printf("nt reset: %s\r\n", ok ? "OK" : "FAIL");
+        }
+        else if (strcmp(subcmd, "mode") == 0)
+        {
+            char *modeStr = strtok(nullptr, " ");
+            if (modeStr == nullptr)
+            {
+                printf("Usage: nt mode <mode> (-1=auto, 1=pp, 3=pv)\r\n");
+                return;
+            }
+            auto mode = static_cast<int8_t>(strtol(modeStr, nullptr, 10));
+            bool ok = s_nanotec->setMode(mode);
+            printf("nt mode: %s\r\n", ok ? "OK" : "FAIL");
+        }
+        else if (strcmp(subcmd, "profile") == 0)
+        {
+            char *velStr = strtok(nullptr, " ");
+            char *accStr = strtok(nullptr, " ");
+            char *decStr = strtok(nullptr, " ");
+            if (velStr == nullptr || accStr == nullptr || decStr == nullptr)
+            {
+                printf("Usage: nt profile <velocity> <accel> <decel>\r\n");
+                return;
+            }
+            auto vel = parseNumber(velStr);
+            auto acc = parseNumber(accStr);
+            auto dec = parseNumber(decStr);
+            bool ok = s_nanotec->setProfile(vel, acc, dec);
+            printf("nt profile: %s\r\n", ok ? "OK" : "FAIL");
+        }
+        else if (strcmp(subcmd, "move") == 0)
+        {
+            char *posStr = strtok(nullptr, " ");
+            char *relStr = strtok(nullptr, " ");
+            if (posStr == nullptr)
+            {
+                printf("Usage: nt move <position> [rel]\r\n");
+                return;
+            }
+            auto pos = static_cast<int32_t>(strtol(posStr, nullptr, 10));
+            if (relStr != nullptr && strcmp(relStr, "rel") == 0)
+            {
+                bool ok = s_nanotec->moveRelative(pos);
+                printf("nt move rel: %s\r\n", ok ? "OK" : "FAIL");
+            }
+            else
+            {
+                bool ok = s_nanotec->moveAbsolute(pos);
+                printf("nt move abs: %s\r\n", ok ? "OK" : "FAIL");
+            }
+        }
+        else if (strcmp(subcmd, "vel") == 0)
+        {
+            char *velStr = strtok(nullptr, " ");
+            if (velStr == nullptr)
+            {
+                printf("Usage: nt vel <velocity>\r\n");
+                return;
+            }
+            auto vel = static_cast<int32_t>(strtol(velStr, nullptr, 10));
+            bool ok = s_nanotec->setVelocity(vel);
+            printf("nt vel: %s\r\n", ok ? "OK" : "FAIL");
+        }
+        else if (strcmp(subcmd, "halt") == 0)
+        {
+            bool ok = s_nanotec->halt();
+            printf("nt halt: %s\r\n", ok ? "OK" : "FAIL");
+        }
+        else if (strcmp(subcmd, "status") == 0)
+        {
+            auto st = s_nanotec->readStatus();
+            printf("Statusword:  0x%04X\r\n", st.statusword);
+
+            /* Decode state from statusword */
+            const uint16_t sw = st.statusword;
+            const char *state = "Unknown";
+            uint16_t masked = sw & 0x006FU;
+            if ((masked & 0x004F) == 0x0000)
+                state = "NotReadyToSwitchOn";
+            else if ((masked & 0x004F) == 0x0040)
+                state = "SwitchOnDisabled";
+            else if ((masked & 0x006F) == 0x0021)
+                state = "ReadyToSwitchOn";
+            else if ((masked & 0x006F) == 0x0023)
+                state = "SwitchedOn";
+            else if ((masked & 0x006F) == 0x0027)
+                state = "OperationEnabled";
+            else if ((masked & 0x006F) == 0x0007)
+                state = "QuickStopActive";
+            else if ((masked & 0x004F) == 0x000F)
+                state = "FaultReactionActive";
+            else if ((masked & 0x004F) == 0x0008)
+                state = "Fault";
+
+            printf("State:       %s\r\n", state);
+            printf("Position:    %ld\r\n", static_cast<long>(st.position));
+            printf("Velocity:    %ld\r\n", static_cast<long>(st.velocity));
+            printf("Mode:        %d\r\n", st.modeDisplay);
+            printf("Tgt reached: %s\r\n", (sw & (1U << 10)) ? "yes" : "no");
+            printf("Fault:       %s\r\n", (sw & (1U << 3)) ? "YES" : "no");
+            printf("Warning:     %s\r\n", (sw & (1U << 7)) ? "YES" : "no");
+        }
+        else if (strcmp(subcmd, "save") == 0)
+        {
+            bool ok = s_nanotec->save();
+            printf("nt save: %s\r\n", ok ? "OK" : "FAIL");
+        }
+        else
+        {
+            printf("Unknown nt command: %s\r\n", subcmd);
+        }
+    }
+
+    /* -------------------------------------------------------------------------- */
     /* Command dispatcher                                                         */
     /* -------------------------------------------------------------------------- */
     static void processCommand(char *line)
@@ -461,6 +650,10 @@ namespace SerialCLI
         {
             cmdMotor(rest);
         }
+        else if (strcmp(cmd, "nt") == 0)
+        {
+            cmdNanotec(rest);
+        }
         else
         {
             printf("Unknown command: %s (type 'help')\r\n", cmd);
@@ -471,10 +664,12 @@ namespace SerialCLI
     /* Public API                                                                 */
     /* -------------------------------------------------------------------------- */
     void init(Interfaces::HLDriver::ICANopen &canopen,
-              Interfaces::HLDriver::ICiA402 *motor)
+              Interfaces::HLDriver::ICiA402 *motor,
+              Interfaces::HLDriver::INanotecPnD *nanotec)
     {
         s_canopen = &canopen;
         s_motor = motor;
+        s_nanotec = nanotec;
     }
 
     [[noreturn]] void run()

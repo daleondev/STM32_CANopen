@@ -11,6 +11,7 @@
 #include "Factory/LLDriver/CAN.hpp"
 #include "Factory/HLDriver/CANopen.hpp"
 #include "Factory/HLDriver/CiA402.hpp"
+#include "Factory/HLDriver/NanotecPnD.hpp"
 #include "SerialCLI.hpp"
 
 extern "C"
@@ -73,9 +74,10 @@ static void canopenThreadEntry(ULONG)
   auto &ican = Factory::LLDriver::CAN::create(&hfdcan1);
   auto &canopen = Factory::HLDriver::CANopen::create(ican);
   auto &motor = Factory::HLDriver::CiA402::create(canopen);
+  auto &nanotec = Factory::HLDriver::NanotecPnD::create(canopen);
 
-  /* Initialize the Serial CLI with CANopen + motor references */
-  SerialCLI::init(canopen, &motor);
+  /* Initialize the Serial CLI with CANopen + motor + nanotec references */
+  SerialCLI::init(canopen, &motor, &nanotec);
 
   /* Initialize the CANopen stack */
   if (!canopen.init(CANOPEN_NODE_ID, CAN_BITRATE))

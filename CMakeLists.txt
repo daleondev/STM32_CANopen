@@ -18,6 +18,8 @@ target_sources(${PROJECT_NAME}
         src/Factory/HLDriver/CANopen.cpp
         src/Implementations/HLDriver/CiA402.cpp
         src/Factory/HLDriver/CiA402.cpp
+        src/Implementations/HLDriver/NanotecPnD.cpp
+        src/Factory/HLDriver/NanotecPnD.cpp
         src/SerialCLI.cpp
 )
 
