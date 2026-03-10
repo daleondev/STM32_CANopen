@@ -66,10 +66,13 @@ platform_prepend(PLATFORM_CUBEMX_SOURCES "${CUBEMX_DIR}/Src"
     stm32h7xx_it.c
     stm32h7xx_hal_msp.c
     stm32h7xx_hal_timebase_tim.c
-    sysmem.c
-    syscalls.c
     system_stm32h7xx.c
     tx_initialize_low_level.S
+)
+
+platform_prepend(PLATFORM_SYS_SOURCES "${CUBEMX_DIR}/Src"
+    sysmem.c
+    syscalls.c
 )
 
 set(PLATFORM_STARTUP_SOURCES
@@ -88,6 +91,8 @@ target_sources(Platform
         ${PLATFORM_BSP_SOURCES}
         ${PLATFORM_CUBEMX_SOURCES}
         ${PLATFORM_STARTUP_SOURCES}
+    INTERFACE
+        ${PLATFORM_SYS_SOURCES}
 )
 
 target_include_directories(Platform
