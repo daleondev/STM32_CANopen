@@ -1,42 +1,39 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(CANopenApp LANGUAGES CXX C ASM)
-set(CMAKE_PROJECT_NAME CANopenApp)
+project(CANopenApp LANGUAGES C CXX ASM)
 
-set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-include("Platform.cmake")
+include(${CMAKE_CURRENT_SOURCE_DIR}/Platform.cmake)
 
-# --- Executable ---
-add_executable(CANopenApp src/main.cpp)
+add_executable(${PROJECT_NAME})
 
-# --- Sources ---
-target_sources(CANopenApp 
+target_sources(${PROJECT_NAME}
     PRIVATE
-        ${CMAKE_SOURCE_DIR}/src/main.cpp
+        src/main.cpp
 )
 
-# --- Includes ---
-target_include_directories(CANopenApp 
+target_include_directories(${PROJECT_NAME}
     PRIVATE
-        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_link_libraries(CANopenApp 
+target_compile_features(${PROJECT_NAME}
+    PRIVATE
+        cxx_std_20
+)
+
+target_link_libraries(${PROJECT_NAME}
     PRIVATE
         threadx
         Platform
 )
 
-target_compile_features(CANopenApp
-    PUBLIC
-        cxx_std_20
-)
+set(APP_ARTIFACT_BASE "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}")
 
-# --- Post-build steps ---
-add_custom_command(TARGET CANopenApp POST_BUILD
-    COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:CANopenApp> CANopenApp.hex
-    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:CANopenApp> CANopenApp.bin
-    COMMAND ${CMAKE_SIZE} $<TARGET_FILE:CANopenApp>
-    COMMENT "Generating hex and bin files, and printing size"
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:${PROJECT_NAME}> "${APP_ARTIFACT_BASE}.hex"
+    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${PROJECT_NAME}> "${APP_ARTIFACT_BASE}.bin"
+    COMMAND ${CMAKE_SIZE} $<TARGET_FILE:${PROJECT_NAME}>
+    COMMENT "Generating firmware images"
 )
