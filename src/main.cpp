@@ -10,6 +10,7 @@
 
 #include "Factory/LLDriver/CAN.hpp"
 #include "Factory/HLDriver/CANopen.hpp"
+#include "Factory/HLDriver/CiA402.hpp"
 #include "SerialCLI.hpp"
 
 extern "C"
@@ -71,9 +72,10 @@ static void canopenThreadEntry(ULONG)
   /* Create drivers via factories */
   auto &ican = Factory::LLDriver::CAN::create(&hfdcan1);
   auto &canopen = Factory::HLDriver::CANopen::create(ican);
+  auto &motor = Factory::HLDriver::CiA402::create(canopen);
 
-  /* Initialize the Serial CLI with CANopen reference */
-  SerialCLI::init(canopen);
+  /* Initialize the Serial CLI with CANopen + motor references */
+  SerialCLI::init(canopen, &motor);
 
   /* Initialize the CANopen stack */
   if (!canopen.init(CANOPEN_NODE_ID, CAN_BITRATE))
@@ -100,6 +102,9 @@ static void canopenThreadEntry(ULONG)
 
     /* Run asynchronous processing (NMT, HB, SDO, Emergency, etc.) */
     uint8_t reset = canopen.process(timeDiff_us);
+
+    /* Update motor driver status from received PDO data */
+    motor.update();
 
     if (reset == 1) /* CO_RESET_COMM */
     {

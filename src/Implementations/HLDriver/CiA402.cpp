@@ -1,0 +1,496 @@
+#include "Implementations/HLDriver/CiA402.hpp"
+
+#include <cstdio>
+#include <cstring>
+
+extern "C"
+{
+#include <tx_api.h>
+}
+
+namespace Implementations::HLDriver
+{
+
+    using State = Interfaces::HLDriver::CiA402State;
+    using Mode = Interfaces::HLDriver::OperationMode;
+
+    /* ---------------------------------------------------------------------- */
+    /* Construction                                                           */
+    /* ---------------------------------------------------------------------- */
+    CiA402::CiA402(Interfaces::HLDriver::ICANopen &canopen)
+        : canopen_{canopen}
+    {
+    }
+
+    /* ---------------------------------------------------------------------- */
+    /* State decode                                                           */
+    /* ---------------------------------------------------------------------- */
+    State CiA402::decodeState(uint16_t sw)
+    {
+        /* Mask bits 6..0 per CiA 402 state encoding table */
+        const uint16_t masked = sw & 0x006FU;
+
+        if ((masked & 0x004F) == 0x0000)
+        {
+            return State::NotReadyToSwitchOn;
+        }
+        if ((masked & 0x004F) == 0x0040)
+        {
+            return State::SwitchOnDisabled;
+        }
+        if ((masked & 0x006F) == 0x0021)
+        {
+            return State::ReadyToSwitchOn;
+        }
+        if ((masked & 0x006F) == 0x0023)
+        {
+            return State::SwitchedOn;
+        }
+        if ((masked & 0x006F) == 0x0027)
+        {
+            return State::OperationEnabled;
+        }
+        if ((masked & 0x006F) == 0x0007)
+        {
+            return State::QuickStopActive;
+        }
+        if ((masked & 0x004F) == 0x000F)
+        {
+            return State::FaultReactionActive;
+        }
+        if ((masked & 0x004F) == 0x0008)
+        {
+            return State::Fault;
+        }
+        return State::Unknown;
+    }
+
+    /* ---------------------------------------------------------------------- */
+    /* Local OD accessors (PDO data)                                          */
+    /* ---------------------------------------------------------------------- */
+    void CiA402::setControlword(uint16_t cw)
+    {
+        OD_RAM.x2000_controlword = cw;
+    }
+
+    uint16_t CiA402::readStatusword() const
+    {
+        return OD_RAM.x2004_statusword;
+    }
+
+    /* ---------------------------------------------------------------------- */
+    /* SDO typed helpers                                                      */
+    /* ---------------------------------------------------------------------- */
+    bool CiA402::sdoWriteU8(uint16_t index, uint8_t sub, uint8_t val)
+    {
+        return canopen_.sdoWrite(driveNodeId_, index, sub, {&val, 1}).success;
+    }
+
+    bool CiA402::sdoWriteU16(uint16_t index, uint8_t sub, uint16_t val)
+    {
+        uint8_t buf[2];
+        std::memcpy(buf, &val, 2);
+        return canopen_.sdoWrite(driveNodeId_, index, sub, {buf, 2}).success;
+    }
+
+    bool CiA402::sdoWriteU32(uint16_t index, uint8_t sub, uint32_t val)
+    {
+        uint8_t buf[4];
+        std::memcpy(buf, &val, 4);
+        return canopen_.sdoWrite(driveNodeId_, index, sub, {buf, 4}).success;
+    }
+
+    bool CiA402::sdoWriteI8(uint16_t index, uint8_t sub, int8_t val)
+    {
+        auto u = static_cast<uint8_t>(val);
+        return canopen_.sdoWrite(driveNodeId_, index, sub, {&u, 1}).success;
+    }
+
+    /* ---------------------------------------------------------------------- */
+    /* Wait for a specific CiA 402 state                                      */
+    /* ---------------------------------------------------------------------- */
+    bool CiA402::waitForState(State target, uint32_t timeout_ms)
+    {
+        uint32_t elapsed = 0;
+        while (elapsed < timeout_ms)
+        {
+            tx_thread_sleep(POLL_INTERVAL_MS);
+            elapsed += POLL_INTERVAL_MS;
+
+            State cur = decodeState(readStatusword());
+            if (cur == target)
+            {
+                return true;
+            }
+            /* Abort early on fault */
+            if (cur == State::Fault || cur == State::FaultReactionActive)
+            {
+                printf("CiA402: fault detected during state transition\r\n");
+                return false;
+            }
+        }
+        printf("CiA402: state transition timeout (wanted %u, got %u)\r\n",
+               static_cast<unsigned>(target),
+               static_cast<unsigned>(decodeState(readStatusword())));
+        return false;
+    }
+
+    /* ---------------------------------------------------------------------- */
+    /* Configure one slave PDO (comm param + mapping) via SDO                 */
+    /* ---------------------------------------------------------------------- */
+    bool CiA402::configureSlavePDO(uint16_t commIdx, uint16_t mapIdx,
+                                   uint32_t cobId, uint8_t txType,
+                                   const uint32_t *mappings, uint8_t mapCount)
+    {
+        /* 1. Disable PDO by setting bit 31 of COB-ID */
+        uint32_t disabledCobId = cobId | 0x80000000U;
+        if (!sdoWriteU32(commIdx, 1, disabledCobId))
+        {
+            return false;
+        }
+
+        /* 2. Clear mapping count */
+        if (!sdoWriteU8(mapIdx, 0, 0))
+        {
+            return false;
+        }
+
+        /* 3. Write mapping entries */
+        for (uint8_t i = 0; i < mapCount; ++i)
+        {
+            if (!sdoWriteU32(mapIdx, i + 1, mappings[i]))
+            {
+                return false;
+            }
+        }
+
+        /* 4. Set mapping count */
+        if (!sdoWriteU8(mapIdx, 0, mapCount))
+        {
+            return false;
+        }
+
+        /* 5. Set transmission type */
+        if (!sdoWriteU8(commIdx, 2, txType))
+        {
+            return false;
+        }
+
+        /* 6. Enable PDO by writing COB-ID without bit 31 */
+        if (!sdoWriteU32(commIdx, 1, cobId))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    /* ---------------------------------------------------------------------- */
+    /* init()                                                                 */
+    /* ---------------------------------------------------------------------- */
+    bool CiA402::init(uint8_t driveNodeId)
+    {
+        driveNodeId_ = driveNodeId;
+        initialized_ = false;
+
+        printf("CiA402: initialising drive node %u\r\n", driveNodeId);
+
+        /* Put drive in pre-operational for SDO configuration */
+        canopen_.sendNMTCommand(128, driveNodeId_); /* CO_NMT_ENTER_PRE_OPERATIONAL */
+        tx_thread_sleep(50);
+
+        /* ---- Configure slave RPDO1 (drive receives controlword + target pos) ---- */
+        /* COB-ID = 0x200 + driveNodeId (matches our TPDO1) */
+        {
+            constexpr uint32_t rpdo1Mappings[] = {
+                0x60400010, /* controlword  — 16 bits */
+                0x607A0020  /* target position — 32 bits */
+            };
+            if (!configureSlavePDO(SLAVE_RPDO1_COMM, SLAVE_RPDO1_MAP,
+                                   0x200U + driveNodeId_, 0x01,
+                                   rpdo1Mappings, 2))
+            {
+                printf("CiA402: slave RPDO1 config failed\r\n");
+                return false;
+            }
+        }
+
+        /* ---- Configure slave RPDO2 (drive receives modes + target velocity) ---- */
+        {
+            constexpr uint32_t rpdo2Mappings[] = {
+                0x60600008, /* modes of operation — 8 bits */
+                0x60FF0020  /* target velocity — 32 bits */
+            };
+            if (!configureSlavePDO(SLAVE_RPDO2_COMM, SLAVE_RPDO2_MAP,
+                                   0x300U + driveNodeId_, 0x01,
+                                   rpdo2Mappings, 2))
+            {
+                printf("CiA402: slave RPDO2 config failed\r\n");
+                return false;
+            }
+        }
+
+        /* ---- Configure slave TPDO1 (drive sends statusword + actual pos) ---- */
+        {
+            constexpr uint32_t tpdo1Mappings[] = {
+                0x60410010, /* statusword — 16 bits */
+                0x60640020  /* position actual value — 32 bits */
+            };
+            if (!configureSlavePDO(SLAVE_TPDO1_COMM, SLAVE_TPDO1_MAP,
+                                   0x180U + driveNodeId_, 0x01,
+                                   tpdo1Mappings, 2))
+            {
+                printf("CiA402: slave TPDO1 config failed\r\n");
+                return false;
+            }
+        }
+
+        /* ---- Configure slave TPDO2 (drive sends modes display) ---- */
+        {
+            constexpr uint32_t tpdo2Mappings[] = {
+                0x60610008 /* modes of operation display — 8 bits */
+            };
+            if (!configureSlavePDO(SLAVE_TPDO2_COMM, SLAVE_TPDO2_MAP,
+                                   0x280U + driveNodeId_, 0x01,
+                                   tpdo2Mappings, 1))
+            {
+                printf("CiA402: slave TPDO2 config failed\r\n");
+                return false;
+            }
+        }
+
+        /* ---- Configure heartbeat on the slave (produce every 500 ms) ---- */
+        {
+            uint16_t hbTime = 500;
+            uint8_t buf[2];
+            std::memcpy(buf, &hbTime, 2);
+            canopen_.sdoWrite(driveNodeId_, 0x1017, 0, {buf, 2});
+        }
+
+        /* ---- Start the drive node ---- */
+        canopen_.sendNMTCommand(1, driveNodeId_); /* CO_NMT_ENTER_OPERATIONAL */
+        tx_thread_sleep(50);
+
+        /* Clear local controlword */
+        setControlword(0);
+
+        initialized_ = true;
+        printf("CiA402: drive node %u initialised\r\n", driveNodeId_);
+        return true;
+    }
+
+    /* ---------------------------------------------------------------------- */
+    /* getStatus()                                                            */
+    /* ---------------------------------------------------------------------- */
+    Interfaces::HLDriver::DriveStatus CiA402::getStatus() const
+    {
+        return status_;
+    }
+
+    /* ---------------------------------------------------------------------- */
+    /* update()  — called each CANopen cycle (~1 ms)                          */
+    /* ---------------------------------------------------------------------- */
+    void CiA402::update()
+    {
+        if (!initialized_)
+        {
+            return;
+        }
+
+        uint16_t sw = readStatusword();
+        status_.rawStatusword = sw;
+        status_.state = decodeState(sw);
+        status_.actualPosition = OD_RAM.x2005_actualPosition;
+        status_.activeModeDisplay = OD_RAM.x2006_modesOfOperationDisplay;
+        status_.targetReached = (sw & SW_TARGET_REACHED) != 0;
+        status_.fault = (sw & SW_FAULT) != 0;
+        status_.warning = (sw & SW_WARNING) != 0;
+    }
+
+    /* ---------------------------------------------------------------------- */
+    /* enable()  — walk state machine to OperationEnabled                     */
+    /* ---------------------------------------------------------------------- */
+    bool CiA402::enable()
+    {
+        if (!initialized_)
+        {
+            return false;
+        }
+
+        State cur = decodeState(readStatusword());
+
+        /* From Fault: must reset first */
+        if (cur == State::Fault)
+        {
+            printf("CiA402: drive in Fault — call faultReset() first\r\n");
+            return false;
+        }
+
+        /* Step 1: Shutdown — transition to ReadyToSwitchOn */
+        if (cur == State::SwitchOnDisabled || cur == State::ReadyToSwitchOn ||
+            cur == State::SwitchedOn || cur == State::OperationEnabled)
+        {
+            if (cur != State::ReadyToSwitchOn && cur != State::SwitchedOn &&
+                cur != State::OperationEnabled)
+            {
+                setControlword(CW_ENABLE_VOLTAGE | CW_QUICK_STOP);
+                if (!waitForState(State::ReadyToSwitchOn, STATE_TRANSITION_TIMEOUT_MS))
+                {
+                    return false;
+                }
+            }
+        }
+
+        cur = decodeState(readStatusword());
+
+        /* Step 2: Switch On */
+        if (cur == State::ReadyToSwitchOn)
+        {
+            setControlword(CW_SWITCH_ON | CW_ENABLE_VOLTAGE | CW_QUICK_STOP);
+            if (!waitForState(State::SwitchedOn, STATE_TRANSITION_TIMEOUT_MS))
+            {
+                return false;
+            }
+        }
+
+        cur = decodeState(readStatusword());
+
+        /* Step 3: Enable Operation */
+        if (cur == State::SwitchedOn)
+        {
+            setControlword(CW_SWITCH_ON | CW_ENABLE_VOLTAGE | CW_QUICK_STOP | CW_ENABLE_OPERATION);
+            if (!waitForState(State::OperationEnabled, STATE_TRANSITION_TIMEOUT_MS))
+            {
+                return false;
+            }
+        }
+
+        printf("CiA402: drive enabled (OperationEnabled)\r\n");
+        return true;
+    }
+
+    /* ---------------------------------------------------------------------- */
+    /* disable()                                                              */
+    /* ---------------------------------------------------------------------- */
+    bool CiA402::disable()
+    {
+        if (!initialized_)
+        {
+            return false;
+        }
+
+        /* Disable voltage → SwitchOnDisabled */
+        setControlword(0);
+        return waitForState(State::SwitchOnDisabled, STATE_TRANSITION_TIMEOUT_MS);
+    }
+
+    /* ---------------------------------------------------------------------- */
+    /* quickStop()                                                            */
+    /* ---------------------------------------------------------------------- */
+    bool CiA402::quickStop()
+    {
+        if (!initialized_)
+        {
+            return false;
+        }
+
+        setControlword(CW_ENABLE_VOLTAGE); /* Quick stop = deassert bit 2 */
+        return waitForState(State::QuickStopActive, STATE_TRANSITION_TIMEOUT_MS);
+    }
+
+    /* ---------------------------------------------------------------------- */
+    /* faultReset()                                                           */
+    /* ---------------------------------------------------------------------- */
+    bool CiA402::faultReset()
+    {
+        if (!initialized_)
+        {
+            return false;
+        }
+
+        /* Rising edge on bit 7 */
+        setControlword(0);
+        tx_thread_sleep(10);
+        setControlword(CW_FAULT_RESET);
+        tx_thread_sleep(10);
+        setControlword(0);
+
+        return waitForState(State::SwitchOnDisabled, STATE_TRANSITION_TIMEOUT_MS);
+    }
+
+    /* ---------------------------------------------------------------------- */
+    /* setOperationMode()                                                     */
+    /* ---------------------------------------------------------------------- */
+    bool CiA402::setOperationMode(Interfaces::HLDriver::OperationMode mode)
+    {
+        if (!initialized_)
+        {
+            return false;
+        }
+
+        auto modeVal = static_cast<int8_t>(mode);
+
+        /* Write to slave's modes-of-operation register via SDO */
+        if (!sdoWriteI8(OD_MODES_OF_OPERATION, 0, modeVal))
+        {
+            printf("CiA402: failed to set mode %d via SDO\r\n", modeVal);
+            return false;
+        }
+
+        /* Also update the local OD copy (sent via TPDO2) */
+        OD_RAM.x2002_modesOfOperation = modeVal;
+
+        printf("CiA402: mode set to %d\r\n", modeVal);
+        return true;
+    }
+
+    /* ---------------------------------------------------------------------- */
+    /* moveToPosition()                                                       */
+    /* ---------------------------------------------------------------------- */
+    bool CiA402::moveToPosition(int32_t position, bool relative)
+    {
+        if (!initialized_ || status_.state != State::OperationEnabled)
+        {
+            return false;
+        }
+
+        /* Write target position to local OD (picked up by TPDO1) */
+        OD_RAM.x2001_targetPosition = position;
+
+        /* Build controlword with new-setpoint bit */
+        uint16_t cw = CW_SWITCH_ON | CW_ENABLE_VOLTAGE | CW_QUICK_STOP | CW_ENABLE_OPERATION | CW_NEW_SETPOINT;
+        if (relative)
+        {
+            cw |= CW_ABS_REL;
+        }
+        setControlword(cw);
+
+        /* After a few cycles, clear new-setpoint so the drive doesn't restart */
+        tx_thread_sleep(5);
+        cw &= ~CW_NEW_SETPOINT;
+        setControlword(cw);
+
+        printf("CiA402: move to %ld %s\r\n",
+               static_cast<long>(position),
+               relative ? "(relative)" : "(absolute)");
+        return true;
+    }
+
+    /* ---------------------------------------------------------------------- */
+    /* setTargetVelocity()                                                    */
+    /* ---------------------------------------------------------------------- */
+    bool CiA402::setTargetVelocity(int32_t velocity)
+    {
+        if (!initialized_ || status_.state != State::OperationEnabled)
+        {
+            return false;
+        }
+
+        /* Write target velocity to local OD (picked up by TPDO2) */
+        OD_RAM.x2003_targetVelocity = velocity;
+
+        printf("CiA402: target velocity = %ld\r\n", static_cast<long>(velocity));
+        return true;
+    }
+
+} // namespace Implementations::HLDriver

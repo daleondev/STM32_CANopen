@@ -16,6 +16,8 @@ target_sources(${PROJECT_NAME}
         src/Factory/LLDriver/CAN.cpp
         src/Implementations/HLDriver/CANopen.cpp
         src/Factory/HLDriver/CANopen.cpp
+        src/Implementations/HLDriver/CiA402.cpp
+        src/Factory/HLDriver/CiA402.cpp
         src/SerialCLI.cpp
 )
 

@@ -19,6 +19,7 @@ namespace SerialCLI
     /* Module state                                                               */
     /* -------------------------------------------------------------------------- */
     static Interfaces::HLDriver::ICANopen *s_canopen = nullptr;
+    static Interfaces::HLDriver::ICiA402 *s_motor = nullptr;
 
     /* -------------------------------------------------------------------------- */
     /* UART helpers                                                               */
@@ -94,6 +95,19 @@ namespace SerialCLI
         printf("  nmt <start|stop|preop|reset> <id> - Send NMT command (id=0 for all)\r\n");
         printf("  sdo read <nodeId> <index> <sub>   - SDO upload (read from remote)\r\n");
         printf("  sdo write <nodeId> <idx> <sub> <byte0> [byte1..] - SDO download\r\n");
+        if (s_motor != nullptr)
+        {
+            printf("Motor commands:\r\n");
+            printf("  motor init                        - Init drive (configure PDOs, go operational)\r\n");
+            printf("  motor enable                      - Enable drive (OperationEnabled)\r\n");
+            printf("  motor disable                     - Disable drive\r\n");
+            printf("  motor stop                        - Quick stop\r\n");
+            printf("  motor status                      - Show drive status\r\n");
+            printf("  motor mode <pp|pv>                - Set operation mode\r\n");
+            printf("  motor move <pos> [rel]            - Move to position (optional: rel)\r\n");
+            printf("  motor velocity <vel>              - Set target velocity\r\n");
+            printf("  motor fault-reset                 - Reset fault\r\n");
+        }
     }
 
     static void cmdStatus()
@@ -248,6 +262,151 @@ namespace SerialCLI
     }
 
     /* -------------------------------------------------------------------------- */
+    /* Motor command handlers                                                     */
+    /* -------------------------------------------------------------------------- */
+    static constexpr uint8_t DRIVE_NODE_ID = 1;
+
+    static const char *stateToString(Interfaces::HLDriver::CiA402State state)
+    {
+        using S = Interfaces::HLDriver::CiA402State;
+        switch (state)
+        {
+        case S::NotReadyToSwitchOn:
+            return "NotReadyToSwitchOn";
+        case S::SwitchOnDisabled:
+            return "SwitchOnDisabled";
+        case S::ReadyToSwitchOn:
+            return "ReadyToSwitchOn";
+        case S::SwitchedOn:
+            return "SwitchedOn";
+        case S::OperationEnabled:
+            return "OperationEnabled";
+        case S::QuickStopActive:
+            return "QuickStopActive";
+        case S::FaultReactionActive:
+            return "FaultReactionActive";
+        case S::Fault:
+            return "Fault";
+        default:
+            return "Unknown";
+        }
+    }
+
+    static void cmdMotor(char *args)
+    {
+        if (s_motor == nullptr)
+        {
+            printf("Motor driver not available\r\n");
+            return;
+        }
+
+        char *subcmd = strtok(args, " ");
+        if (subcmd == nullptr)
+        {
+            printf("Usage: motor <init|enable|disable|stop|status|mode|move|velocity|fault-reset>\r\n");
+            return;
+        }
+
+        if (strcmp(subcmd, "init") == 0)
+        {
+            bool ok = s_motor->init(DRIVE_NODE_ID);
+            printf("Motor init: %s\r\n", ok ? "OK" : "FAIL");
+        }
+        else if (strcmp(subcmd, "enable") == 0)
+        {
+            bool ok = s_motor->enable();
+            printf("Motor enable: %s\r\n", ok ? "OK" : "FAIL");
+        }
+        else if (strcmp(subcmd, "disable") == 0)
+        {
+            bool ok = s_motor->disable();
+            printf("Motor disable: %s\r\n", ok ? "OK" : "FAIL");
+        }
+        else if (strcmp(subcmd, "stop") == 0)
+        {
+            bool ok = s_motor->quickStop();
+            printf("Motor quick stop: %s\r\n", ok ? "OK" : "FAIL");
+        }
+        else if (strcmp(subcmd, "status") == 0)
+        {
+            auto st = s_motor->getStatus();
+            printf("Drive state:    %s\r\n", stateToString(st.state));
+            printf("Statusword:     0x%04X\r\n", st.rawStatusword);
+            printf("Actual pos:     %ld\r\n", static_cast<long>(st.actualPosition));
+            printf("Active mode:    %d\r\n", st.activeModeDisplay);
+            printf("Target reached: %s\r\n", st.targetReached ? "yes" : "no");
+            printf("Fault:          %s\r\n", st.fault ? "YES" : "no");
+            printf("Warning:        %s\r\n", st.warning ? "YES" : "no");
+        }
+        else if (strcmp(subcmd, "mode") == 0)
+        {
+            char *modeStr = strtok(nullptr, " ");
+            if (modeStr == nullptr)
+            {
+                printf("Usage: motor mode <pp|pv>\r\n");
+                return;
+            }
+
+            using Mode = Interfaces::HLDriver::OperationMode;
+            Mode mode;
+            if (strcmp(modeStr, "pp") == 0)
+            {
+                mode = Mode::ProfilePosition;
+            }
+            else if (strcmp(modeStr, "pv") == 0)
+            {
+                mode = Mode::ProfileVelocity;
+            }
+            else
+            {
+                printf("Unknown mode: %s (use pp or pv)\r\n", modeStr);
+                return;
+            }
+
+            bool ok = s_motor->setOperationMode(mode);
+            printf("Set mode: %s\r\n", ok ? "OK" : "FAIL");
+        }
+        else if (strcmp(subcmd, "move") == 0)
+        {
+            char *posStr = strtok(nullptr, " ");
+            char *relStr = strtok(nullptr, " ");
+            if (posStr == nullptr)
+            {
+                printf("Usage: motor move <position> [rel]\r\n");
+                return;
+            }
+
+            auto pos = static_cast<int32_t>(strtol(posStr, nullptr, 10));
+            bool relative = (relStr != nullptr && strcmp(relStr, "rel") == 0);
+
+            bool ok = s_motor->moveToPosition(pos, relative);
+            printf("Move: %s\r\n", ok ? "OK" : "FAIL");
+        }
+        else if (strcmp(subcmd, "velocity") == 0)
+        {
+            char *velStr = strtok(nullptr, " ");
+            if (velStr == nullptr)
+            {
+                printf("Usage: motor velocity <value>\r\n");
+                return;
+            }
+
+            auto vel = static_cast<int32_t>(strtol(velStr, nullptr, 10));
+            bool ok = s_motor->setTargetVelocity(vel);
+            printf("Velocity: %s\r\n", ok ? "OK" : "FAIL");
+        }
+        else if (strcmp(subcmd, "fault-reset") == 0)
+        {
+            bool ok = s_motor->faultReset();
+            printf("Fault reset: %s\r\n", ok ? "OK" : "FAIL");
+        }
+        else
+        {
+            printf("Unknown motor command: %s\r\n", subcmd);
+        }
+    }
+
+    /* -------------------------------------------------------------------------- */
     /* Command dispatcher                                                         */
     /* -------------------------------------------------------------------------- */
     static void processCommand(char *line)
@@ -298,6 +457,10 @@ namespace SerialCLI
                 printf("Usage: sdo <read|write> ...\r\n");
             }
         }
+        else if (strcmp(cmd, "motor") == 0)
+        {
+            cmdMotor(rest);
+        }
         else
         {
             printf("Unknown command: %s (type 'help')\r\n", cmd);
@@ -307,9 +470,11 @@ namespace SerialCLI
     /* -------------------------------------------------------------------------- */
     /* Public API                                                                 */
     /* -------------------------------------------------------------------------- */
-    void init(Interfaces::HLDriver::ICANopen &canopen)
+    void init(Interfaces::HLDriver::ICANopen &canopen,
+              Interfaces::HLDriver::ICiA402 *motor)
     {
         s_canopen = &canopen;
+        s_motor = motor;
     }
 
     [[noreturn]] void run()
