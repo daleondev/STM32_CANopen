@@ -53,6 +53,7 @@ platform_prepend(PLATFORM_HAL_SOURCES "${HAL_DIR}/Src"
     stm32h7xx_hal_usart_ex.c
     stm32h7xx_hal_uart_ex.c
     stm32h7xx_hal_uart.c
+    stm32h7xx_hal_fdcan.c
 )
 
 platform_prepend(PLATFORM_CUBEMX_SOURCES "${CUBEMX_DIR}/Src"

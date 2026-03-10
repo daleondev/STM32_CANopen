@@ -12,11 +12,19 @@ add_executable(${PROJECT_NAME})
 target_sources(${PROJECT_NAME}
     PRIVATE
         src/main.cpp
+        src/Implementations/LLDriver/CAN.cpp
+        src/Factory/LLDriver/CAN.cpp
+        src/Implementations/HLDriver/CANopen.cpp
+        src/Factory/HLDriver/CANopen.cpp
+        src/SerialCLI.cpp
 )
 
 target_include_directories(${PROJECT_NAME}
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Interfaces
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Implementations
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Factory
 )
 
 target_compile_features(${PROJECT_NAME}

@@ -9,6 +9,8 @@ target_sources(CANopen
         ${CMAKE_CURRENT_SOURCE_DIR}/CANopenNode/301/CO_HBconsumer.c
         ${CMAKE_CURRENT_SOURCE_DIR}/CANopenNode/301/CO_Emergency.c
         ${CMAKE_CURRENT_SOURCE_DIR}/CANopenNode/301/CO_SDOserver.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/CANopenNode/301/CO_SDOclient.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/CANopenNode/301/CO_fifo.c
         ${CMAKE_CURRENT_SOURCE_DIR}/CANopenNode/301/CO_TIME.c
         ${CMAKE_CURRENT_SOURCE_DIR}/CANopenNode/301/CO_SYNC.c
         ${CMAKE_CURRENT_SOURCE_DIR}/CANopenNode/301/CO_PDO.c
