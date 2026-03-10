@@ -22,6 +22,8 @@ target_sources(CANopen
 )
 
 target_include_directories(CANopen
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/Interfaces/LLDriver
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/CANopenNode
         ${CMAKE_CURRENT_SOURCE_DIR}/CANopenNode_port
