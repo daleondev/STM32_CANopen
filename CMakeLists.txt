@@ -1,19 +1,17 @@
 cmake_minimum_required(VERSION 3.22)
 
+project(CANopenApp LANGUAGES CXX C ASM)
 set(CMAKE_PROJECT_NAME CANopenApp)
-project(${CMAKE_PROJECT_NAME} LANGUAGES CXX C ASM)
 
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/extern/lely)
+set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 
 # --- Executable ---
-add_executable(${CMAKE_PROJECT_NAME})
+add_executable(CANopenApp src/main.cpp)
 
 # --- Sources ---
-target_sources(${CMAKE_PROJECT_NAME} 
+target_sources(CANopenApp 
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/canopen_cia402_motor_threadx.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/simulated_can_port.cpp
 
         ${CMAKE_CURRENT_SOURCE_DIR}/extern/CubeMX/Src/main.c
         ${CMAKE_CURRENT_SOURCE_DIR}/extern/CubeMX/Src/gpio.c
@@ -31,7 +29,7 @@ target_sources(${CMAKE_PROJECT_NAME}
 )
 
 # --- Includes ---
-target_include_directories(${CMAKE_PROJECT_NAME} 
+target_include_directories(CANopenApp 
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/extern/CubeMX/Inc
@@ -42,21 +40,20 @@ target_include_directories(${CMAKE_PROJECT_NAME}
 set(TX_USER_FILE ${CMAKE_CURRENT_SOURCE_DIR}/extern/CubeMX/Inc/tx_user.h)
 include("STM32H753ZITX.cmake")
 
-target_link_libraries(${CMAKE_PROJECT_NAME} 
+target_link_libraries(CANopenApp 
     PRIVATE
         Platform
-        CANopen
 )
 
-target_compile_features(${CMAKE_PROJECT_NAME}
+target_compile_features(CANopenApp
     PUBLIC
         cxx_std_20
 )
 
 # --- Post-build steps ---
-add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${CMAKE_PROJECT_NAME}.hex
-    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${CMAKE_PROJECT_NAME}.bin
-    COMMAND ${CMAKE_SIZE} $<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+add_custom_command(TARGET CANopenApp POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:CANopenApp> CANopenApp.hex
+    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:CANopenApp> CANopenApp.bin
+    COMMAND ${CMAKE_SIZE} $<TARGET_FILE:CANopenApp>
     COMMENT "Generating hex and bin files, and printing size"
 )
