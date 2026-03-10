@@ -3,6 +3,7 @@
 #include "rng.h"
 #include "rtc.h"
 #include "tim.h"
+#include "fdcan.h"
 
 #include <tx_api.h>
 

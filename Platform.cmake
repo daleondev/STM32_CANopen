@@ -61,6 +61,7 @@ platform_prepend(PLATFORM_CUBEMX_SOURCES "${CUBEMX_DIR}/Src"
     rng.c
     rtc.c
     tim.c
+    fdcan.c
     stm32h7xx_it.c
     stm32h7xx_hal_msp.c
     stm32h7xx_hal_timebase_tim.c

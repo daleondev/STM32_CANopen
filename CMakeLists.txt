@@ -5,6 +5,7 @@ project(CANopenApp LANGUAGES C CXX ASM)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/Platform.cmake)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/extern/CANopenNode)
 
 add_executable(${PROJECT_NAME})
 
@@ -27,6 +28,7 @@ target_link_libraries(${PROJECT_NAME}
     PRIVATE
         threadx
         Platform
+        CANopen
 )
 
 set(APP_ARTIFACT_BASE "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}")
