@@ -71,21 +71,9 @@ namespace Implementations::HLDriver
         static constexpr uint16_t SW_TARGET_REACHED = 1U << 10;
 
         /* ------------------------------------------------------------------ */
-        /* CiA 402 drive OD indices (slave side)                              */
+        /* CiA 402 drive OD indices (slave side, used for SDO writes)         */
         /* ------------------------------------------------------------------ */
-        static constexpr uint16_t OD_CONTROLWORD = 0x6040;
-        static constexpr uint16_t OD_STATUSWORD = 0x6041;
         static constexpr uint16_t OD_MODES_OF_OPERATION = 0x6060;
-
-        /* Remote RPDO/TPDO communication parameter indices (slave side) */
-        static constexpr uint16_t SLAVE_RPDO1_COMM = 0x1400;
-        static constexpr uint16_t SLAVE_RPDO1_MAP = 0x1600;
-        static constexpr uint16_t SLAVE_RPDO2_COMM = 0x1401;
-        static constexpr uint16_t SLAVE_RPDO2_MAP = 0x1601;
-        static constexpr uint16_t SLAVE_TPDO1_COMM = 0x1800;
-        static constexpr uint16_t SLAVE_TPDO1_MAP = 0x1A00;
-        static constexpr uint16_t SLAVE_TPDO2_COMM = 0x1801;
-        static constexpr uint16_t SLAVE_TPDO2_MAP = 0x1A01;
 
         /* Timeouts */
         static constexpr uint32_t STATE_TRANSITION_TIMEOUT_MS = 2000;
@@ -111,11 +99,6 @@ namespace Implementations::HLDriver
         bool sdoWriteU16(uint16_t index, uint8_t sub, uint16_t val);
         bool sdoWriteU32(uint16_t index, uint8_t sub, uint32_t val);
         bool sdoWriteI8(uint16_t index, uint8_t sub, int8_t val);
-
-        /** Configure one slave PDO (comm + mapping) via SDO. */
-        bool configureSlavePDO(uint16_t commIdx, uint16_t mapIdx,
-                               uint32_t cobId, uint8_t txType,
-                               const uint32_t *mappings, uint8_t mapCount);
     };
 
 } // namespace Implementations::HLDriver

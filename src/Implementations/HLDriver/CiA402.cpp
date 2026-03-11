@@ -136,56 +136,6 @@ namespace Implementations::HLDriver
     }
 
     /* ---------------------------------------------------------------------- */
-    /* Configure one slave PDO (comm param + mapping) via SDO                 */
-    /* ---------------------------------------------------------------------- */
-    bool CiA402::configureSlavePDO(uint16_t commIdx, uint16_t mapIdx,
-                                   uint32_t cobId, uint8_t txType,
-                                   const uint32_t *mappings, uint8_t mapCount)
-    {
-        /* 1. Disable PDO by setting bit 31 of COB-ID */
-        uint32_t disabledCobId = cobId | 0x80000000U;
-        if (!sdoWriteU32(commIdx, 1, disabledCobId))
-        {
-            return false;
-        }
-
-        /* 2. Clear mapping count */
-        if (!sdoWriteU8(mapIdx, 0, 0))
-        {
-            return false;
-        }
-
-        /* 3. Write mapping entries */
-        for (uint8_t i = 0; i < mapCount; ++i)
-        {
-            if (!sdoWriteU32(mapIdx, i + 1, mappings[i]))
-            {
-                return false;
-            }
-        }
-
-        /* 4. Set mapping count */
-        if (!sdoWriteU8(mapIdx, 0, mapCount))
-        {
-            return false;
-        }
-
-        /* 5. Set transmission type */
-        if (!sdoWriteU8(commIdx, 2, txType))
-        {
-            return false;
-        }
-
-        /* 6. Enable PDO by writing COB-ID without bit 31 */
-        if (!sdoWriteU32(commIdx, 1, cobId))
-        {
-            return false;
-        }
-
-        return true;
-    }
-
-    /* ---------------------------------------------------------------------- */
     /* init()                                                                 */
     /* ---------------------------------------------------------------------- */
     bool CiA402::init(uint8_t driveNodeId)
@@ -199,65 +149,21 @@ namespace Implementations::HLDriver
         canopen_.sendNMTCommand(128, driveNodeId_); /* CO_NMT_ENTER_PRE_OPERATIONAL */
         tx_thread_sleep(50);
 
-        /* ---- Configure slave RPDO1 (drive receives controlword + target pos) ---- */
-        /* COB-ID = 0x200 + driveNodeId (matches our TPDO1) */
-        {
-            constexpr uint32_t rpdo1Mappings[] = {
-                0x60400010, /* controlword  — 16 bits */
-                0x607A0020  /* target position — 32 bits */
-            };
-            if (!configureSlavePDO(SLAVE_RPDO1_COMM, SLAVE_RPDO1_MAP,
-                                   0x200U + driveNodeId_, 0x01,
-                                   rpdo1Mappings, 2))
-            {
-                printf("CiA402: slave RPDO1 config failed\r\n");
-                return false;
-            }
-        }
+        /*
+         * Master-side PDO mapping (TPDO1/2, RPDO1/2) is fully defined in the
+         * OD generated from CiA402_Master.xpd — no runtime setup needed here.
+         *
+         * Drive-side PDO mapping relies on standard CiA 402 factory defaults:
+         *   Drive RPDO1 (0x200+id): controlword (0x6040) + target position (0x607A)
+         *   Drive RPDO2 (0x300+id): modes of operation (0x6060) + target velocity (0x60FF)
+         *   Drive TPDO1 (0x180+id): statusword (0x6041) + actual position (0x6064)
+         *   Drive TPDO2 (0x280+id): modes of operation display (0x6061)
+         *
+         * If a drive ships with non-standard defaults, add explicit
+         * configureSlavePDO() calls here to override them.
+         */
 
-        /* ---- Configure slave RPDO2 (drive receives modes + target velocity) ---- */
-        {
-            constexpr uint32_t rpdo2Mappings[] = {
-                0x60600008, /* modes of operation — 8 bits */
-                0x60FF0020  /* target velocity — 32 bits */
-            };
-            if (!configureSlavePDO(SLAVE_RPDO2_COMM, SLAVE_RPDO2_MAP,
-                                   0x300U + driveNodeId_, 0x01,
-                                   rpdo2Mappings, 2))
-            {
-                printf("CiA402: slave RPDO2 config failed\r\n");
-                return false;
-            }
-        }
-
-        /* ---- Configure slave TPDO1 (drive sends statusword + actual pos) ---- */
-        {
-            constexpr uint32_t tpdo1Mappings[] = {
-                0x60410010, /* statusword — 16 bits */
-                0x60640020  /* position actual value — 32 bits */
-            };
-            if (!configureSlavePDO(SLAVE_TPDO1_COMM, SLAVE_TPDO1_MAP,
-                                   0x180U + driveNodeId_, 0x01,
-                                   tpdo1Mappings, 2))
-            {
-                printf("CiA402: slave TPDO1 config failed\r\n");
-                return false;
-            }
-        }
-
-        /* ---- Configure slave TPDO2 (drive sends modes display) ---- */
-        {
-            constexpr uint32_t tpdo2Mappings[] = {
-                0x60610008 /* modes of operation display — 8 bits */
-            };
-            if (!configureSlavePDO(SLAVE_TPDO2_COMM, SLAVE_TPDO2_MAP,
-                                   0x280U + driveNodeId_, 0x01,
-                                   tpdo2Mappings, 1))
-            {
-                printf("CiA402: slave TPDO2 config failed\r\n");
-                return false;
-            }
-        }
+        // https://www.nanotec.com/fileadmin/files/Handbuecher/Handbuecher_Archiv/Plug_Drive/PD4C_CANopen_Technical-Manual_V2.0.1.pdf?1656012592
 
         /* ---- Configure heartbeat on the slave (produce every 500 ms) ---- */
         {
