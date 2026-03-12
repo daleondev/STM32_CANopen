@@ -329,11 +329,11 @@ namespace Implementations::HLDriver
             return false;
         }
 
-        /* Rising edge on bit 7 */
+        /* Rising edge on bit 7 — each step must persist for at least 2 SYNC cycles */
         setControlword(0);
-        tx_thread_sleep(10);
+        tx_thread_sleep(20);
         setControlword(CW_FAULT_RESET);
-        tx_thread_sleep(10);
+        tx_thread_sleep(20);
         setControlword(0);
 
         return waitForState(State::SwitchOnDisabled, STATE_TRANSITION_TIMEOUT_MS);
@@ -412,8 +412,8 @@ namespace Implementations::HLDriver
         }
         setControlword(cw);
 
-        /* After a few cycles, clear new-setpoint so the drive doesn't restart */
-        tx_thread_sleep(5);
+        /* After at least 2 SYNC cycles, clear new-setpoint so the drive doesn't restart */
+        tx_thread_sleep(20);
         cw &= ~CW_NEW_SETPOINT;
         setControlword(cw);
 

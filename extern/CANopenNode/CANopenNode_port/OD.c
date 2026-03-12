@@ -22,9 +22,9 @@
 *******************************************************************************/
 OD_ATTR_PERSIST_COMM OD_PERSIST_COMM_t OD_PERSIST_COMM = {
     .x1000_deviceType = 0x00000000,
-    .x1005_COB_ID_SYNCMessage = 0x00000080,
-    .x1006_communicationCyclePeriod = 0x00000000,
-    .x1007_synchronousWindowLength = 0x00000000,
+    .x1005_COB_ID_SYNCMessage = 0x40000080,
+    .x1006_communicationCyclePeriod = 0x00002710,
+    .x1007_synchronousWindowLength = 0x00001388,
     .x1012_COB_IDTimeStampObject = 0x00000100,
     .x1014_COB_ID_EMCY = 0x00000080,
     .x1015_inhibitTimeEMCY = 0x0000,
@@ -39,8 +39,8 @@ OD_ATTR_PERSIST_COMM OD_PERSIST_COMM_t OD_PERSIST_COMM = {
         .serialNumber = 0x00000000},
     .x1019_synchronousCounterOverflowValue = 0x00,
     .x1280_SDOClientParameter = {.highestSub_indexSupported = 0x03, .COB_IDClientToServerTx = 0x80000000, .COB_IDServerToClientRx = 0x80000000, .node_IDOfTheSDOServer = 0x01},
-    .x1400_RPDOCommunicationParameter = {.highestSub_indexSupported = 0x05, .COB_IDUsedByRPDO = 0x00000181, .transmissionType = 0xFE, .eventTimer = 0x0000},
-    .x1401_RPDOCommunicationParameter = {.highestSub_indexSupported = 0x05, .COB_IDUsedByRPDO = 0x00000281, .transmissionType = 0xFE, .eventTimer = 0x0000},
+    .x1400_RPDOCommunicationParameter = {.highestSub_indexSupported = 0x05, .COB_IDUsedByRPDO = 0x00000181, .transmissionType = 0x01, .eventTimer = 0x0032},
+    .x1401_RPDOCommunicationParameter = {.highestSub_indexSupported = 0x05, .COB_IDUsedByRPDO = 0x00000281, .transmissionType = 0x01, .eventTimer = 0x0032},
     .x1402_RPDOCommunicationParameter = {.highestSub_indexSupported = 0x05, .COB_IDUsedByRPDO = 0x80000400, .transmissionType = 0xFE, .eventTimer = 0x0000},
     .x1403_RPDOCommunicationParameter = {.highestSub_indexSupported = 0x05, .COB_IDUsedByRPDO = 0x80000500, .transmissionType = 0xFE, .eventTimer = 0x0000},
     .x1600_RPDOMappingParameter = {.numberOfMappedApplicationObjectsInPDO = 0x02, .applicationObject1 = 0x20040010, .applicationObject2 = 0x20050020, .applicationObject3 = 0x00000000, .applicationObject4 = 0x00000000, .applicationObject5 = 0x00000000, .applicationObject6 = 0x00000000, .applicationObject7 = 0x00000000, .applicationObject8 = 0x00000000},

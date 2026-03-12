@@ -25,7 +25,7 @@ extern "C"
 /* Configuration constants                                                    */
 /* -------------------------------------------------------------------------- */
 static constexpr uint8_t CANOPEN_NODE_ID = 0x7FU; /* Master node ID */
-static constexpr uint16_t CAN_BITRATE = 500U;     /* 500 kbit/s */
+static constexpr uint16_t CAN_BITRATE = 1000U;    /* 1 Mbit/s (Nanotec PD4-C) */
 
 /* -------------------------------------------------------------------------- */
 /* Thread definitions                                                         */
@@ -66,7 +66,10 @@ static void mainThreadEntry(ULONG)
 }
 
 /**
- * @brief CANopen thread — runs the CANopen stack processing at ~1 ms interval.
+ * @brief CANopen thread — runs the CANopen stack processing at ~10 ms interval.
+ *
+ * The 10 ms cycle matches the SYNC producer period (OD 0x1006 = 10 000 µs).
+ * All synchronous TPDOs and RPDOs are exchanged once per SYNC cycle.
  */
 static void canopenThreadEntry(ULONG)
 {
@@ -120,8 +123,8 @@ static void canopenThreadEntry(ULONG)
       HAL_NVIC_SystemReset();
     }
 
-    /* Sleep ~1 ms */
-    tx_thread_sleep(1);
+    /* Sleep ~10 ms — matches SYNC cycle period */
+    tx_thread_sleep(10);
   }
 }
 

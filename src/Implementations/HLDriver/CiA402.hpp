@@ -76,8 +76,8 @@ namespace Implementations::HLDriver
         static constexpr uint16_t SW_TARGET_REACHED = 1U << 10;
 
         /* Timeouts */
-        static constexpr uint32_t STATE_TRANSITION_TIMEOUT_MS = 2000;
-        static constexpr uint32_t POLL_INTERVAL_MS = 10;
+        static constexpr uint32_t STATE_TRANSITION_TIMEOUT_MS = 3000;
+        static constexpr uint32_t POLL_INTERVAL_MS = 10; /* matches SYNC/thread cycle */
 
         /* ------------------------------------------------------------------ */
         /* Helpers                                                            */
