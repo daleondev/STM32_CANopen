@@ -15,8 +15,13 @@ namespace Implementations::HLDriver
     /**
      * @brief CiA 402 drive profile implementation (single drive).
      *
-     * Uses SDO for configuration / mode selection and PDO (via local OD
-     * variables 0x2000–0x2006) for real-time controlword / statusword exchange.
+     * Uses PDO (via local OD variables 0x2000–0x2006) for all real-time
+     * data exchange: controlword, statusword, target/actual position,
+     * modes of operation, and target velocity.
+     * SDO is used only for one-shot configuration (heartbeat, etc.).
+     *
+     * Thread safety: all access to OD_RAM and the cached status_ struct
+     * is protected by CO_LOCK_OD / CO_UNLOCK_OD (ThreadX mutex).
      */
     class CiA402 final : public Interfaces::HLDriver::ICiA402
     {
@@ -70,11 +75,6 @@ namespace Implementations::HLDriver
         static constexpr uint16_t SW_WARNING = 1U << 7;
         static constexpr uint16_t SW_TARGET_REACHED = 1U << 10;
 
-        /* ------------------------------------------------------------------ */
-        /* CiA 402 drive OD indices (slave side, used for SDO writes)         */
-        /* ------------------------------------------------------------------ */
-        static constexpr uint16_t OD_MODES_OF_OPERATION = 0x6060;
-
         /* Timeouts */
         static constexpr uint32_t STATE_TRANSITION_TIMEOUT_MS = 2000;
         static constexpr uint32_t POLL_INTERVAL_MS = 10;
@@ -98,7 +98,6 @@ namespace Implementations::HLDriver
         bool sdoWriteU8(uint16_t index, uint8_t sub, uint8_t val);
         bool sdoWriteU16(uint16_t index, uint8_t sub, uint16_t val);
         bool sdoWriteU32(uint16_t index, uint8_t sub, uint32_t val);
-        bool sdoWriteI8(uint16_t index, uint8_t sub, int8_t val);
     };
 
 } // namespace Implementations::HLDriver

@@ -111,9 +111,12 @@ namespace Interfaces::HLDriver
 
         /**
          * @brief Set the operating mode on the drive (Profile Position, Profile
-         *        Velocity, etc.) via SDO write to 0x6060.
+         *        Velocity, etc.) via PDO (local OD → TPDO2 → drive 0x6060).
          *
-         * @note Blocking SDO transfer.
+         * Blocks until the drive confirms the mode via modesOfOperationDisplay
+         * (RPDO2) or times out.
+         *
+         * @note Blocking — polls confirmation for up to 2 s.
          */
         virtual bool setOperationMode(OperationMode mode) = 0;
 

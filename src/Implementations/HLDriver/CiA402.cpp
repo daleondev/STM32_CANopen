@@ -67,15 +67,22 @@ namespace Implementations::HLDriver
 
     /* ---------------------------------------------------------------------- */
     /* Local OD accessors (PDO data)                                          */
+    /* All OD_RAM fields mapped to PDOs must be accessed under CO_LOCK_OD     */
+    /* to prevent torn reads/writes vs the CANopen processing thread.         */
     /* ---------------------------------------------------------------------- */
     void CiA402::setControlword(uint16_t cw)
     {
+        CO_LOCK_OD(nullptr);
         OD_RAM.x2000_controlword = cw;
+        CO_UNLOCK_OD(nullptr);
     }
 
     uint16_t CiA402::readStatusword() const
     {
-        return OD_RAM.x2004_statusword;
+        CO_LOCK_OD(nullptr);
+        uint16_t sw = OD_RAM.x2004_statusword;
+        CO_UNLOCK_OD(nullptr);
+        return sw;
     }
 
     /* ---------------------------------------------------------------------- */
@@ -98,12 +105,6 @@ namespace Implementations::HLDriver
         uint8_t buf[4];
         std::memcpy(buf, &val, 4);
         return canopen_.sdoWrite(driveNodeId_, index, sub, {buf, 4}).success;
-    }
-
-    bool CiA402::sdoWriteI8(uint16_t index, uint8_t sub, int8_t val)
-    {
-        auto u = static_cast<uint8_t>(val);
-        return canopen_.sdoWrite(driveNodeId_, index, sub, {&u, 1}).success;
     }
 
     /* ---------------------------------------------------------------------- */
@@ -190,7 +191,10 @@ namespace Implementations::HLDriver
     /* ---------------------------------------------------------------------- */
     Interfaces::HLDriver::DriveStatus CiA402::getStatus() const
     {
-        return status_;
+        CO_LOCK_OD(nullptr);
+        auto snapshot = status_;
+        CO_UNLOCK_OD(nullptr);
+        return snapshot;
     }
 
     /* ---------------------------------------------------------------------- */
@@ -203,14 +207,25 @@ namespace Implementations::HLDriver
             return;
         }
 
-        uint16_t sw = readStatusword();
+        /*
+         * Take a consistent snapshot of all PDO-fed OD variables and update
+         * the cached status under a single lock hold.  The lock is shared
+         * with the serial thread (setControlword, readStatusword, getStatus,
+         * moveToPosition, setTargetVelocity, setOperationMode).
+         */
+        CO_LOCK_OD(nullptr);
+        uint16_t sw = OD_RAM.x2004_statusword;
+        int32_t pos = OD_RAM.x2005_actualPosition;
+        int8_t modeDisp = OD_RAM.x2006_modesOfOperationDisplay;
+
         status_.rawStatusword = sw;
         status_.state = decodeState(sw);
-        status_.actualPosition = OD_RAM.x2005_actualPosition;
-        status_.activeModeDisplay = OD_RAM.x2006_modesOfOperationDisplay;
+        status_.actualPosition = pos;
+        status_.activeModeDisplay = modeDisp;
         status_.targetReached = (sw & SW_TARGET_REACHED) != 0;
         status_.fault = (sw & SW_FAULT) != 0;
         status_.warning = (sw & SW_WARNING) != 0;
+        CO_UNLOCK_OD(nullptr);
     }
 
     /* ---------------------------------------------------------------------- */
@@ -336,18 +351,32 @@ namespace Implementations::HLDriver
 
         auto modeVal = static_cast<int8_t>(mode);
 
-        /* Write to slave's modes-of-operation register via SDO */
-        if (!sdoWriteI8(OD_MODES_OF_OPERATION, 0, modeVal))
+        /* Write to local OD — TPDO2 delivers it to the drive's 0x6060 */
+        CO_LOCK_OD(nullptr);
+        OD_RAM.x2002_modesOfOperation = modeVal;
+        CO_UNLOCK_OD(nullptr);
+
+        /* Wait for the drive to confirm via its TPDO2 → our RPDO2 */
+        constexpr uint32_t timeout_ms = 2000;
+        uint32_t elapsed = 0;
+        while (elapsed < timeout_ms)
         {
-            printf("CiA402: failed to set mode %d via SDO\r\n", modeVal);
-            return false;
+            tx_thread_sleep(POLL_INTERVAL_MS);
+            elapsed += POLL_INTERVAL_MS;
+
+            CO_LOCK_OD(nullptr);
+            int8_t confirmed = OD_RAM.x2006_modesOfOperationDisplay;
+            CO_UNLOCK_OD(nullptr);
+
+            if (confirmed == modeVal)
+            {
+                printf("CiA402: mode %d confirmed\r\n", modeVal);
+                return true;
+            }
         }
 
-        /* Also update the local OD copy (sent via TPDO2) */
-        OD_RAM.x2002_modesOfOperation = modeVal;
-
-        printf("CiA402: mode set to %d\r\n", modeVal);
-        return true;
+        printf("CiA402: mode change timeout (wanted %d)\r\n", modeVal);
+        return false;
     }
 
     /* ---------------------------------------------------------------------- */
@@ -355,13 +384,25 @@ namespace Implementations::HLDriver
     /* ---------------------------------------------------------------------- */
     bool CiA402::moveToPosition(int32_t position, bool relative)
     {
-        if (!initialized_ || status_.state != State::OperationEnabled)
+        if (!initialized_)
         {
             return false;
         }
 
+        {
+            CO_LOCK_OD(nullptr);
+            State cur = status_.state;
+            CO_UNLOCK_OD(nullptr);
+            if (cur != State::OperationEnabled)
+            {
+                return false;
+            }
+        }
+
         /* Write target position to local OD (picked up by TPDO1) */
+        CO_LOCK_OD(nullptr);
         OD_RAM.x2001_targetPosition = position;
+        CO_UNLOCK_OD(nullptr);
 
         /* Build controlword with new-setpoint bit */
         uint16_t cw = CW_SWITCH_ON | CW_ENABLE_VOLTAGE | CW_QUICK_STOP | CW_ENABLE_OPERATION | CW_NEW_SETPOINT;
@@ -387,13 +428,25 @@ namespace Implementations::HLDriver
     /* ---------------------------------------------------------------------- */
     bool CiA402::setTargetVelocity(int32_t velocity)
     {
-        if (!initialized_ || status_.state != State::OperationEnabled)
+        if (!initialized_)
         {
             return false;
         }
 
+        {
+            CO_LOCK_OD(nullptr);
+            State cur = status_.state;
+            CO_UNLOCK_OD(nullptr);
+            if (cur != State::OperationEnabled)
+            {
+                return false;
+            }
+        }
+
         /* Write target velocity to local OD (picked up by TPDO2) */
+        CO_LOCK_OD(nullptr);
         OD_RAM.x2003_targetVelocity = velocity;
+        CO_UNLOCK_OD(nullptr);
 
         printf("CiA402: target velocity = %ld\r\n", static_cast<long>(velocity));
         return true;
