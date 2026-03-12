@@ -249,6 +249,11 @@ namespace Implementations::LLDriver
         }
     }
 
+    void CAN::handleRxOverflowIRQ()
+    {
+        overflowCount_++;
+    }
+
 } // namespace Implementations::LLDriver
 
 /*
@@ -265,6 +270,10 @@ extern "C"
             if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) != 0U)
             {
                 can->handleRxIRQ();
+            }
+            if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_MESSAGE_LOST) != 0U)
+            {
+                can->handleRxOverflowIRQ();
             }
         }
     }

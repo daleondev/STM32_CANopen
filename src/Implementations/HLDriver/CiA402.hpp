@@ -3,6 +3,8 @@
 #include "Interfaces/HLDriver/ICiA402.hpp"
 #include "Interfaces/HLDriver/ICANopen.hpp"
 
+#include <atomic>
+
 extern "C"
 {
 #include "CANopen.h"
@@ -46,7 +48,7 @@ namespace Implementations::HLDriver
     private:
         Interfaces::HLDriver::ICANopen &canopen_;
         uint8_t driveNodeId_{0};
-        bool initialized_{false};
+        std::atomic<bool> initialized_{false};
 
         /* Cached status — updated every cycle via update() */
         Interfaces::HLDriver::DriveStatus status_{};

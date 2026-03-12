@@ -46,6 +46,11 @@ namespace Implementations::LLDriver
         void handleTxCompleteIRQ();
 
         /**
+         * @brief Called from HAL_FDCAN_RxFifo0Callback when messages are lost due to FIFO overflow.
+         */
+        void handleRxOverflowIRQ();
+
+        /**
          * @brief Get the singleton-like instance pointer for ISR routing.
          */
         static CAN *instance();

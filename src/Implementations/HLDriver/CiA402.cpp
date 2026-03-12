@@ -247,6 +247,17 @@ namespace Implementations::HLDriver
             return false;
         }
 
+        /* From QuickStopActive: disable voltage first → SwitchOnDisabled */
+        if (cur == State::QuickStopActive)
+        {
+            setControlword(0);
+            if (!waitForState(State::SwitchOnDisabled, STATE_TRANSITION_TIMEOUT_MS))
+            {
+                return false;
+            }
+            cur = State::SwitchOnDisabled;
+        }
+
         /* Step 1: Shutdown — transition to ReadyToSwitchOn */
         if (cur == State::SwitchOnDisabled || cur == State::ReadyToSwitchOn ||
             cur == State::SwitchedOn || cur == State::OperationEnabled)

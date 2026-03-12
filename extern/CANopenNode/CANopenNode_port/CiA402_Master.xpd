@@ -897,7 +897,7 @@
           <q1:parameter uniqueID="UID_SUB_101601" access="readWrite">
             <label lang="en">Consumer heartbeat time</label>
             <UDINT />
-            <q1:defaultValue value="0x00000000" />
+            <q1:defaultValue value="0x000103E8" />
           </q1:parameter>
           <q1:parameter uniqueID="UID_SUB_101602" access="readWrite">
             <label lang="en">Consumer heartbeat time</label>
@@ -937,7 +937,7 @@
           <q1:parameter uniqueID="UID_OBJ_1017" access="readWrite">
             <description lang="en">Heartbeat producer time in ms (0 = disable transmission).</description>
             <UINT />
-            <q1:defaultValue value="0" />
+            <q1:defaultValue value="1000" />
             <q1:property name="CO_countLabel" value="HB_PROD" />
             <q1:property name="CO_storageGroup" value="PERSIST_COMM" />
           </q1:parameter>

@@ -45,7 +45,7 @@ void CO_OD_mutex_init(void)
 {
     if (!odMutexInitialized)
     {
-        tx_mutex_create(&odMutex, const_cast<CHAR *>("CO_OD_Mutex"), TX_NO_INHERIT);
+        tx_mutex_create(&odMutex, const_cast<CHAR *>("CO_OD_Mutex"), TX_INHERIT);
         odMutexInitialized = true;
     }
 }
