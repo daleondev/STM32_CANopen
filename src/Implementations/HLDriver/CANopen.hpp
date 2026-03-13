@@ -37,6 +37,11 @@ namespace Implementations::HLDriver
                                                  std::span<const uint8_t> data) override;
         bool isRunning() const override;
 
+        /**
+         * @brief Get the raw CANopenNode stack handle (for diagnostics).
+         */
+        CO_t *getCO() const { return co_; }
+
     private:
         Interfaces::LLDriver::ICAN &ican_;
         CO_t *co_{nullptr};

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace Interfaces::HLDriver
@@ -50,6 +52,29 @@ namespace Interfaces::HLDriver
     };
 
     /**
+     * @brief Record of a single CiA 402 state machine transition.
+     */
+    struct StateTransition
+    {
+        uint32_t timestamp_ms{0};
+        CiA402State fromState{CiA402State::Unknown};
+        CiA402State toState{CiA402State::Unknown};
+        uint16_t statusword{0};
+    };
+
+    /**
+     * @brief Ring buffer snapshot of recent state transitions.
+     */
+    static constexpr size_t STATE_LOG_CAPACITY = 16;
+
+    struct StateLog
+    {
+        std::array<StateTransition, STATE_LOG_CAPACITY> entries{};
+        uint8_t count{0};    ///< Total entries stored (saturates at CAPACITY).
+        uint8_t writeIdx{0}; ///< Next write slot.
+    };
+
+    /**
      * @brief High-level CiA 402 drive profile interface.
      *
      * Commands a single servo / stepper drive over CANopen using the CiA 402
@@ -81,6 +106,11 @@ namespace Interfaces::HLDriver
          * This is a non-blocking read of local RAM only.
          */
         virtual DriveStatus getStatus() const = 0;
+
+        /**
+         * @brief Return a snapshot of recent state transitions (ring buffer copy).
+         */
+        virtual StateLog getStateLog() const = 0;
 
         /**
          * @brief Walk the state machine to OperationEnabled.

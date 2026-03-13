@@ -36,6 +36,7 @@ namespace Implementations::HLDriver
 
         bool init(uint8_t driveNodeId) override;
         Interfaces::HLDriver::DriveStatus getStatus() const override;
+        Interfaces::HLDriver::StateLog getStateLog() const override;
         bool enable() override;
         bool disable() override;
         bool quickStop() override;
@@ -52,6 +53,9 @@ namespace Implementations::HLDriver
 
         /* Cached status — updated every cycle via update() */
         Interfaces::HLDriver::DriveStatus status_{};
+
+        /* State transition ring buffer */
+        Interfaces::HLDriver::StateLog stateLog_{};
 
         /* ------------------------------------------------------------------ */
         /* CiA 402 controlword bit masks                                      */

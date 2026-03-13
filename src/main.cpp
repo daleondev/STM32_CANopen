@@ -12,7 +12,9 @@
 #include "Factory/HLDriver/CANopen.hpp"
 #include "Factory/HLDriver/CiA402.hpp"
 #include "Factory/HLDriver/NanotecPnD.hpp"
+#include "Implementations/HLDriver/CANopen.hpp"
 #include "SerialCLI.hpp"
+#include "Diagnostics.hpp"
 
 extern "C"
 {
@@ -92,6 +94,10 @@ static void canopenThreadEntry(ULONG)
       tx_thread_sleep(1000);
     }
   }
+
+  /* Initialize diagnostics with raw stack access */
+  auto &canopenImpl = static_cast<Implementations::HLDriver::CANopen &>(canopen);
+  Diagnostics::init(canopenImpl.getCO(), &ican, &canopen);
 
   uint32_t lastTimerUs = getTimerUs();
 

@@ -198,6 +198,17 @@ namespace Implementations::HLDriver
     }
 
     /* ---------------------------------------------------------------------- */
+    /* getStateLog()                                                          */
+    /* ---------------------------------------------------------------------- */
+    Interfaces::HLDriver::StateLog CiA402::getStateLog() const
+    {
+        CO_LOCK_OD(nullptr);
+        auto snapshot = stateLog_;
+        CO_UNLOCK_OD(nullptr);
+        return snapshot;
+    }
+
+    /* ---------------------------------------------------------------------- */
     /* update()  — called each CANopen cycle (~1 ms)                          */
     /* ---------------------------------------------------------------------- */
     void CiA402::update()
@@ -218,6 +229,8 @@ namespace Implementations::HLDriver
         int32_t pos = OD_RAM.x2005_actualPosition;
         int8_t modeDisp = OD_RAM.x2006_modesOfOperationDisplay;
 
+        State prevState = status_.state;
+
         status_.rawStatusword = sw;
         status_.state = decodeState(sw);
         status_.actualPosition = pos;
@@ -225,6 +238,23 @@ namespace Implementations::HLDriver
         status_.targetReached = (sw & SW_TARGET_REACHED) != 0;
         status_.fault = (sw & SW_FAULT) != 0;
         status_.warning = (sw & SW_WARNING) != 0;
+
+        /* Log state transitions */
+        if (status_.state != prevState)
+        {
+            auto &entry = stateLog_.entries[stateLog_.writeIdx];
+            entry.timestamp_ms = tx_time_get();
+            entry.fromState = prevState;
+            entry.toState = status_.state;
+            entry.statusword = sw;
+
+            stateLog_.writeIdx = (stateLog_.writeIdx + 1U) %
+                                 Interfaces::HLDriver::STATE_LOG_CAPACITY;
+            if (stateLog_.count < Interfaces::HLDriver::STATE_LOG_CAPACITY)
+            {
+                stateLog_.count++;
+            }
+        }
         CO_UNLOCK_OD(nullptr);
     }
 

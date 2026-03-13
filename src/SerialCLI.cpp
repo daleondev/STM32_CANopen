@@ -6,6 +6,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "Diagnostics.hpp"
+
 extern "C"
 {
 #include "stm32h7xx_hal.h"
@@ -126,6 +128,17 @@ namespace SerialCLI
             printf("  nt status                         - Read drive status\r\n");
             printf("  nt save                           - Save params to NVM\r\n");
         }
+        printf("Diagnostics commands:\r\n");
+        printf("  diag bus                          - CAN bus health\r\n");
+        printf("  diag stack                        - CANopen stack status\r\n");
+        printf("  diag emcy                         - Emergency history\r\n");
+        printf("  diag hb                           - Heartbeat consumer status\r\n");
+        printf("  diag pdo                          - PDO values & mapping\r\n");
+        printf("  diag sync                         - SYNC producer status\r\n");
+        printf("  diag drive [nodeId]               - Drive errors via SDO (default: 1)\r\n");
+        printf("  diag all [nodeId]                 - Full diagnostic dump\r\n");
+        printf("  diag statelog                     - CiA 402 state transition history\r\n");
+        printf("  diag watch [nodeId] [N] [ms]      - Continuous monitoring\r\n");
     }
 
     static void cmdStatus()
@@ -596,6 +609,86 @@ namespace SerialCLI
     }
 
     /* -------------------------------------------------------------------------- */
+    /* Diagnostics command handler                                              */
+    /* -------------------------------------------------------------------------- */
+    static void cmdDiag(char *args)
+    {
+        char *subcmd = strtok(args, " ");
+        if (subcmd == nullptr)
+        {
+            printf("Usage: diag <bus|stack|emcy|hb|pdo|sync|drive|all|watch>\r\n");
+            return;
+        }
+
+        if (strcmp(subcmd, "bus") == 0)
+        {
+            Diagnostics::printBusStatus();
+        }
+        else if (strcmp(subcmd, "stack") == 0)
+        {
+            Diagnostics::printStackStatus();
+        }
+        else if (strcmp(subcmd, "emcy") == 0)
+        {
+            Diagnostics::printEmergencyHistory();
+        }
+        else if (strcmp(subcmd, "hb") == 0)
+        {
+            Diagnostics::printHeartbeatStatus();
+        }
+        else if (strcmp(subcmd, "pdo") == 0)
+        {
+            Diagnostics::printPDOStatus();
+        }
+        else if (strcmp(subcmd, "sync") == 0)
+        {
+            Diagnostics::printSyncStatus();
+        }
+        else if (strcmp(subcmd, "drive") == 0)
+        {
+            char *nodeStr = strtok(nullptr, " ");
+            uint8_t nodeId = (nodeStr != nullptr)
+                                 ? static_cast<uint8_t>(parseNumber(nodeStr))
+                                 : DRIVE_NODE_ID;
+            Diagnostics::printDriveErrors(nodeId);
+        }
+        else if (strcmp(subcmd, "all") == 0)
+        {
+            char *nodeStr = strtok(nullptr, " ");
+            uint8_t nodeId = (nodeStr != nullptr)
+                                 ? static_cast<uint8_t>(parseNumber(nodeStr))
+                                 : DRIVE_NODE_ID;
+            Diagnostics::printAll(nodeId, s_motor);
+        }
+        else if (strcmp(subcmd, "statelog") == 0)
+        {
+            Diagnostics::printStateLog(s_motor);
+        }
+        else if (strcmp(subcmd, "watch") == 0)
+        {
+            char *nodeStr = strtok(nullptr, " ");
+            char *countStr = strtok(nullptr, " ");
+            char *intervalStr = strtok(nullptr, " ");
+
+            uint8_t nodeId = (nodeStr != nullptr)
+                                 ? static_cast<uint8_t>(parseNumber(nodeStr))
+                                 : DRIVE_NODE_ID;
+            uint32_t count = (countStr != nullptr)
+                                 ? parseNumber(countStr)
+                                 : 10U;
+            uint32_t interval = (intervalStr != nullptr)
+                                    ? parseNumber(intervalStr)
+                                    : 1000U;
+
+            Diagnostics::watch(nodeId, count, interval);
+        }
+        else
+        {
+            printf("Unknown diag command: %s\r\n", subcmd);
+        }
+    }
+
+    /* -------------------------------------------------------------------------- */
     /* Command dispatcher                                                         */
     /* -------------------------------------------------------------------------- */
     static void processCommand(char *line)
@@ -653,6 +746,10 @@ namespace SerialCLI
         else if (strcmp(cmd, "nt") == 0)
         {
             cmdNanotec(rest);
+        }
+        else if (strcmp(cmd, "diag") == 0)
+        {
+            cmdDiag(rest);
         }
         else
         {

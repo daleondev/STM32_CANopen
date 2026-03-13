@@ -21,6 +21,7 @@ target_sources(${PROJECT_NAME}
         src/Implementations/HLDriver/NanotecPnD.cpp
         src/Factory/HLDriver/NanotecPnD.cpp
         src/SerialCLI.cpp
+        src/Diagnostics.cpp
 )
 
 target_include_directories(${PROJECT_NAME}
